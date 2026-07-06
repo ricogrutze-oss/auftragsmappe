@@ -435,6 +435,15 @@
     .ro-info-grid{ grid-template-columns:1fr; }
     .adr-card{ flex-direction:column; align-items:stretch; }
     .adr-card-actions{ justify-content:flex-end; }
+    .filter-bar{ flex-direction:column; align-items:stretch; }
+    .filter-search{ min-width:0; width:100%; }
+    .filter-bar .btn{ width:100%; }
+    .settings-row{ width:100%; }
+    .settings-row .btn{ flex:1 1 auto; }
+    .new-field-input{ width:100%; min-width:0 !important; }
+    .app-title{ flex-wrap:wrap; }
+    .app-title .stamp{ max-width:100%; overflow-wrap:break-word; white-space:normal; }
+    .custom-field-row{ flex-wrap:wrap; }
   }
 </style>
 </head>
@@ -1021,20 +1030,19 @@ function buildKundenname(raw, m){
 function runImport(){
   if(!pendingCsvRows || !columnMapping){ return; }
   const m = columnMapping;
-  let added = 0, skippedDup = 0, skippedEmpty = 0;
+  let added = 0, updatedExisting = 0, skippedDup = 0, skippedEmpty = 0;
 
-  // build lookup of existing OPEN (not erledigt) auftraege keys
-  const existingKeys = new Set(
-    auftraege.filter(a => a.status !== 'erledigt')
-             .map(a => norm(a.kundencode) + '|' + norm(a.vorgang))
-  );
+  // map of existing OPEN (not erledigt) auftraege by key, so duplicates can be backfilled
+  const existingByKey = new Map();
+  auftraege.filter(a => a.status !== 'erledigt').forEach(a => {
+    existingByKey.set(norm(a.kundencode) + '|' + norm(a.vorgang), a);
+  });
 
   for(const raw of pendingCsvRows){
     const kundencode = toStr(m.kundencode ? raw[m.kundencode] : '');
     const vorgang = toStr(m.vorgang ? raw[m.vorgang] : '');
     if(!kundencode.trim() || !vorgang.trim()){ skippedEmpty++; continue; }
     const key = norm(kundencode) + '|' + norm(vorgang);
-    if(existingKeys.has(key)){ skippedDup++; continue; }
 
     const telefonnummer = toStr(m.telefonnummer ? raw[m.telefonnummer] : '');
     const email = toStr(m.email ? raw[m.email] : '');
@@ -1047,9 +1055,30 @@ function runImport(){
     const bauform = toStr(m.bauform ? raw[m.bauform] : '');
     const standort = toStr(m.standort ? raw[m.standort] : '');
 
+    if(existingByKey.has(key)){
+      // Duplicate: don't touch fields already filled (manual edits win),
+      // but backfill anything still empty — covers newly-mapped columns
+      // (e.g. Auftragsbeschreibung) that didn't exist on the first import.
+      const existing = existingByKey.get(key);
+      const backfill = { telefonnummer, email, auftragsbeschreibung, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort };
+      let changed = false;
+      Object.entries(backfill).forEach(([field, val]) => {
+        const isEmpty = existing[field] === '' || existing[field] === null || existing[field] === undefined;
+        const hasVal = field === 'koordinaten' ? !!val : (val !== '' && val !== null && val !== undefined);
+        if(isEmpty && hasVal){
+          existing.history.push({ ts: nowIso(), field, old:'', new: field==='koordinaten' ? fmtCoords(val) : val });
+          existing[field] = val;
+          changed = true;
+        }
+      });
+      if(changed) updatedExisting++;
+      skippedDup++;
+      continue;
+    }
+
     const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, email, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
 
-    auftraege.push({
+    const newAuftrag = {
       id: uid(),
       kundencode: kundencode.trim(),
       vorgang: vorgang.trim(),
@@ -1069,24 +1098,28 @@ function runImport(){
       termin: null,
       importedAt: nowIso(),
       history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus Datei-Import' }]
-    });
-    existingKeys.add(key);
+    };
+    auftraege.push(newAuftrag);
+    existingByKey.set(key, newAuftrag);
     added++;
   }
 
   saveAuftraege();
   saveAdressbuch();
-  settings.lastImport = { ts: nowIso(), added, skippedDup, skippedEmpty };
+  settings.lastImport = { ts: nowIso(), added, updatedExisting, skippedDup, skippedEmpty };
   saveSettings();
   pendingCsvRows = null;
   render();
-  showToast(`Import fertig: ${added} neu, ${skippedDup} Duplikate übersprungen`);
+  const bits = [`${added} neu`];
+  if(updatedExisting) bits.push(`${updatedExisting} bestehende ergänzt`);
+  bits.push(`${skippedDup - updatedExisting} unverändert übersprungen`);
+  showToast(`Import fertig: ${bits.join(', ')}`);
 }
 
 /* ---------------------------------------------------------------
    Backup export / import (for syncing via SharePoint/OneDrive)
 --------------------------------------------------------------- */
-function exportBackup(){
+async function exportBackup(){
   const payload = {
     kind: 'auftragsmappe-sicherung',
     version: 1,
@@ -1096,20 +1129,37 @@ function exportBackup(){
     settings,
     columnMapping,
   };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'auftragsmappe-sicherung.json';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  const jsonStr = JSON.stringify(payload, null, 2);
+  const filename = 'auftragsmappe-sicherung.json';
+  const file = new File([jsonStr], filename, { type: 'application/json' });
+
+  let shared = false;
+  if(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
+    try{
+      await navigator.share({ files: [file], title: 'Auftragsmappe-Sicherung' });
+      shared = true;
+    }catch(e){
+      // user cancelled the share sheet, or it failed — fall through to download
+      if(e && e.name === 'AbortError'){ return; } // user just cancelled, don't also trigger a download
+    }
+  }
+
+  if(!shared){
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
 
   settings.lastExport = nowIso();
   saveSettings();
   render();
-  showToast('Sicherung heruntergeladen – im SharePoint-/OneDrive-Ordner ablegen');
+  showToast(shared ? 'Sicherung geteilt' : 'Sicherung heruntergeladen – im SharePoint-/OneDrive-Ordner ablegen');
 }
 
 document.getElementById('backupInput').addEventListener('change', function(e){
@@ -1427,7 +1477,7 @@ function renderTermine(list){
 function renderEinstellungen(){
   const lp = settings.lastImport;
   const lastImportText = lp
-    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu · ${lp.skippedDup} Duplikate übersprungen`
+    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu${lp.updatedExisting ? ' · ' + lp.updatedExisting + ' bestehende ergänzt' : ''} · ${lp.skippedDup} Duplikate übersprungen`
     : 'Noch kein Import';
 
   const syncBits = [];
@@ -1467,7 +1517,7 @@ function renderEinstellungen(){
         </div>
       `}
       <div class="settings-row" style="margin-top:10px">
-        <input type="text" id="newCustomFieldLabel" placeholder="Name des neuen Feldes" style="flex:1;min-width:160px;padding:8px 11px;border:1px solid var(--line);border-radius:6px;font-size:13.5px">
+        <input type="text" id="newCustomFieldLabel" class="new-field-input" placeholder="Name des neuen Feldes" style="flex:1;min-width:160px;padding:8px 11px;border:1px solid var(--line);border-radius:6px;font-size:13.5px">
         <button class="btn" onclick="addCustomField()">+ Feld hinzufügen</button>
       </div>
       <p class="hint">Eigene Felder erscheinen als zusätzliche, frei editierbare Spalte in der Auftragstabelle und im Bearbeiten-Fenster.</p>
@@ -1570,17 +1620,23 @@ function doResetMapping(){
 }
 
 let filters = {
-  offen:    { search:'', status:'', vorgang:'' },
-  erledigt: { search:'', status:'', vorgang:'' }
+  offen:    { search:'', statuses:[], vorgaenge:[] },
+  erledigt: { search:'', statuses:[], vorgaenge:[] }
 };
+let tempFilterSelection = { tabKey:null, type:null, selected:[] };
+let tempFilterOptions = [];
+
+function getFullListForTab(tabKey){
+  return auftraege.filter(a => tabKey === 'erledigt' ? a.status === 'erledigt' : a.status !== 'erledigt');
+}
 
 function applyFilters(list, tabKey){
   const f = filters[tabKey];
-  if(!f.search && !f.status && !f.vorgang) return list;
+  if(!f.search && f.statuses.length === 0 && f.vorgaenge.length === 0) return list;
   const q = f.search.trim().toLowerCase();
   return list.filter(a => {
-    if(f.status && a.status !== f.status) return false;
-    if(f.vorgang && a.vorgang !== f.vorgang) return false;
+    if(f.statuses.length && !f.statuses.includes(a.status)) return false;
+    if(f.vorgaenge.length && !f.vorgaenge.includes(a.vorgang)) return false;
     if(q){
       const haystack = [a.kundencode, a.kundenname, a.vorgang, a.adresse, a.standort,
         a.telefonnummer, a.email, a.zaehler, a.bauform, a.zaehlerplatzId, a.kommentar]
@@ -1593,30 +1649,29 @@ function applyFilters(list, tabKey){
 
 function renderFilterBar(tabKey, fullList){
   const f = filters[tabKey];
-  const vorgangOptions = Array.from(new Set(fullList.map(a => a.vorgang).filter(Boolean))).sort();
-  const anyActive = !!(f.search || f.status || f.vorgang);
+  const statusActive = f.statuses.length > 0;
+  const vorgangActive = f.vorgaenge.length > 0;
+  const anyActive = !!(f.search || statusActive || vorgangActive);
   return `
     <div class="filter-bar">
       <input type="text" id="filtersearch-${tabKey}" class="filter-search" placeholder="Suchen (Name, Adresse, Kundencode, Kommentar…)"
         value="${escapeHtml(f.search)}" oninput="setFilter('${tabKey}','search', this.value)">
-      <select class="filter-select" onchange="setFilter('${tabKey}','status', this.value)">
-        <option value="">Alle Status</option>
-        ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${f.status===k?'selected':''}>${v.label}</option>`).join('')}
-      </select>
-      <select class="filter-select" onchange="setFilter('${tabKey}','vorgang', this.value)">
-        <option value="">Alle Vorgangstypen</option>
-        ${vorgangOptions.map(v => `<option value="${escapeHtml(v)}" ${f.vorgang===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
-      </select>
+      <button class="btn small ${statusActive?'primary':''}" onclick="openMultiFilterModal('${tabKey}','status')">
+        Status${statusActive ? ' (' + f.statuses.length + ')' : ''} ▾
+      </button>
+      <button class="btn small ${vorgangActive?'primary':''}" onclick="openMultiFilterModal('${tabKey}','vorgang')">
+        Vorgangstyp${vorgangActive ? ' (' + f.vorgaenge.length + ')' : ''} ▾
+      </button>
       ${anyActive ? `<button class="btn small ghost" onclick="resetFilter('${tabKey}')">✕ Filter zurücksetzen</button>` : ''}
     </div>`;
 }
+
 function setFilter(tabKey, key, value){
   filters[tabKey][key] = value;
   const searchEl = document.getElementById('filtersearch-' + tabKey);
   const cursorPos = searchEl ? searchEl.selectionStart : null;
 
-  const fullList = auftraege.filter(a => tabKey === 'erledigt' ? a.status === 'erledigt' : a.status !== 'erledigt');
-  renderTabView(tabKey, fullList);
+  renderTabView(tabKey, getFullListForTab(tabKey));
 
   if(key === 'search'){
     const newEl = document.getElementById('filtersearch-' + tabKey);
@@ -1627,7 +1682,63 @@ function setFilter(tabKey, key, value){
   }
 }
 function resetFilter(tabKey){
-  filters[tabKey] = { search:'', status:'', vorgang:'' };
+  filters[tabKey] = { search:'', statuses:[], vorgaenge:[] };
+  render();
+}
+
+/* --- Excel-style multi-select filter popover (as a modal) --- */
+function openMultiFilterModal(tabKey, type){
+  const isStatus = type === 'status';
+  const options = isStatus
+    ? Object.entries(STATUS).map(([k,v]) => ({ value:k, label:v.label }))
+    : Array.from(new Set(getFullListForTab(tabKey).map(a => a.vorgang).filter(Boolean))).sort().map(v => ({ value:v, label:v }));
+
+  const current = filters[tabKey][isStatus ? 'statuses' : 'vorgaenge'];
+  const startSelected = current.length === 0 ? options.map(o => o.value) : current.slice();
+  tempFilterSelection = { tabKey, type, selected: startSelected };
+  tempFilterOptions = options;
+
+  showModal(`
+    <div class="modal-head"><h3>${isStatus ? 'Status' : 'Vorgangstyp'} filtern</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="settings-row" style="margin-bottom:10px">
+        <button class="btn small" onclick="toggleAllFilterOptions(true)">Alle auswählen</button>
+        <button class="btn small" onclick="toggleAllFilterOptions(false)">Alle abwählen</button>
+      </div>
+      <div class="col-picker" id="filterOptionsBody">${renderFilterOptionRows()}</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="applyMultiFilter()">Anwenden</button>
+    </div>
+  `);
+}
+function renderFilterOptionRows(){
+  return tempFilterOptions.map(o => `
+    <label>
+      <input type="checkbox" data-fval="${escapeHtml(o.value)}" ${tempFilterSelection.selected.includes(o.value)?'checked':''} onchange="syncFilterCheckbox(this)">
+      ${escapeHtml(o.label)}
+    </label>
+  `).join('');
+}
+function syncFilterCheckbox(el){
+  const val = el.dataset.fval;
+  if(el.checked){
+    if(!tempFilterSelection.selected.includes(val)) tempFilterSelection.selected.push(val);
+  } else {
+    tempFilterSelection.selected = tempFilterSelection.selected.filter(v => v !== val);
+  }
+}
+function toggleAllFilterOptions(checkAll){
+  tempFilterSelection.selected = checkAll ? tempFilterOptions.map(o => o.value) : [];
+  document.getElementById('filterOptionsBody').innerHTML = renderFilterOptionRows();
+}
+function applyMultiFilter(){
+  const { tabKey, type, selected } = tempFilterSelection;
+  const key = type === 'status' ? 'statuses' : 'vorgaenge';
+  // everything selected == no filter, stored as empty array for clean "all" state
+  filters[tabKey][key] = (selected.length === tempFilterOptions.length) ? [] : selected.slice();
+  closeModal();
   render();
 }
 
@@ -2147,7 +2258,7 @@ function openTerminModal(id){
       </div>
       <div class="field">
         <label>Betreff</label>
-        <input type="text" id="terminSubject" value="Termin: ${escapeHtml(a.kundencode)} – ${escapeHtml(a.vorgang)}">
+        <input type="text" id="terminSubject" value="${escapeHtml(a.vorgang)}">
       </div>
       <div class="field">
         <label>Ort</label>
@@ -2155,8 +2266,8 @@ function openTerminModal(id){
       </div>
       <div class="field">
         <label>Teilnehmer-E-Mail (optional)</label>
-        <input type="email" id="terminAttendee" value="${escapeHtml(a.email||'')}" placeholder="kunde@beispiel.de">
-        <p class="hint">${a.email ? 'Automatisch aus der hinterlegten Kunden-E-Mail übernommen — bei Bedarf hier ändern.' : ''} Ohne E-Mail wird eine normale Kalenderdatei erzeugt, die du beim Öffnen direkt in deinen Kalender übernimmst. Mit E-Mail wird eine echte Termineinladung erzeugt, die du nach dem Öffnen in Outlook nur noch senden musst — ein vollautomatischer Versand ohne diesen einen Klick ist im Browser aus Sicherheitsgründen nicht möglich.</p>
+        <input type="email" id="terminAttendee" value="" placeholder="kunde@beispiel.de">
+        <p class="hint">Standardmäßig wird eine normale Kalenderdatei erzeugt, die du beim Öffnen direkt in deinen Kalender übernimmst — ohne dass irgendwas automatisch an eine E-Mail-Adresse geht. Nur wenn du hier selbst eine Adresse einträgst, wird stattdessen eine Termineinladung erzeugt, die du nach dem Öffnen in Outlook noch senden musst.</p>
       </div>
     </div>
     <div class="modal-foot">
@@ -2197,8 +2308,11 @@ function generateIcs(){
   const seq = (a.termin && typeof a.termin.sequence === 'number') ? a.termin.sequence + 1 : 0;
 
   const descLines = [];
-  if(a.vorgang) descLines.push('Vorgang: ' + a.vorgang);
+  descLines.push('Kundencode: ' + a.kundencode);
+  if(a.kundenname) descLines.push('Kunde: ' + a.kundenname);
   if(a.telefonnummer) descLines.push('Telefon: ' + a.telefonnummer);
+  if(a.zaehler) descLines.push('Zähler: ' + a.zaehler);
+  if(a.auftragsbeschreibung) descLines.push('Beschreibung: ' + a.auftragsbeschreibung);
   if(a.kommentar) descLines.push('Notiz: ' + a.kommentar);
   const description = descLines.join(String.fromCharCode(10));
 
@@ -2232,7 +2346,8 @@ function generateIcs(){
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `Termin_${(a.kundencode||'auftrag').replace(/[^a-z0-9]/gi,'_')}.ics`;
+  const fileStamp = `${y}${pad(mo)}${pad(d)}_${pad(hh)}${pad(mm)}_${Date.now().toString().slice(-4)}`;
+  link.download = `Termin_${(a.kundencode||'auftrag').replace(/[^a-z0-9]/gi,'_')}_${fileStamp}.ics`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
