@@ -722,34 +722,55 @@ function mappingMatchesHeaders(headers){
 }
 
 function openMappingModal(manual){
-  const headers = pendingCsvHeaders || (columnMapping ? Object.values(columnMapping).filter(Boolean) : []);
-  const fields = [
+  const headers = pendingCsvHeaders || (columnMapping ? Object.values(columnMapping).filter(v => typeof v === 'string' && v) : []);
+  const basicFields = [
     { key:'kundencode', label:'Kundencode', required:true },
     { key:'vorgang', label:'Vorgang', required:true },
     { key:'telefonnummer', label:'Telefonnummer', required:false },
-    { key:'adresse', label:'Adresse', required:false },
     { key:'zaehlerplatzId', label:'Zählerplatz-ID', required:false },
-    { key:'koordinaten', label:'Koordinaten (Breite, Länge)', required:false },
   ];
-  const opts = (['']).concat(headers).map(h => h).filter((v,i,a)=>a.indexOf(v)===i);
-  let rowsHtml = fields.map(f => {
+  const addressFields = [
+    { key:'adresse', label:'Adresse (eine Spalte)' },
+    { key:'strasse', label:'Straße' },
+    { key:'hausnummer', label:'Hausnummer' },
+    { key:'hausnummerzusatz', label:'Hausnummerzusatz' },
+    { key:'ortsteil', label:'Ortsteil' },
+    { key:'ort', label:'Ort' },
+  ];
+  const coordFields = [
+    { key:'breite', label:'Geographische Breite' },
+    { key:'laenge', label:'Geographische Länge' },
+    { key:'koordinaten', label:'oder: Koordinaten kombiniert (Breite, Länge)' },
+  ];
+
+  const opts = (['']).concat(headers).filter((v,i,a)=>a.indexOf(v)===i);
+  const buildRow = (f) => {
     const current = columnMapping ? columnMapping[f.key] : '';
     const optionsHtml = opts.map(o => `<option value="${escapeHtml(o)}" ${o===current?'selected':''}>${o===''?'– nicht vorhanden –':escapeHtml(o)}</option>`).join('');
     return `<div class="mapping-row">
       <label>${f.label}${f.required?' <span class="req-star">*</span>':''}</label>
       <select id="map_${f.key}">${optionsHtml}</select>
     </div>`;
-  }).join('');
+  };
 
+  let bodyHtml;
   if(headers.length === 0){
-    rowsHtml = `<p class="hint">Noch keine Spalten bekannt. Bitte zuerst eine Datei importieren.</p>`;
+    bodyHtml = `<p class="hint">Noch keine Spalten bekannt. Bitte zuerst eine Datei importieren.</p>`;
+  } else {
+    bodyHtml = `
+      ${basicFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Adresse</strong> — entweder eine fertige Spalte wählen, oder aus mehreren Spalten zusammensetzen (z.B. Straße + Hausnummer + Ort):</p>
+      ${addressFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Koordinaten</strong> — entweder zwei getrennte Spalten, oder eine kombinierte:</p>
+      ${coordFields.map(buildRow).join('')}
+    `;
   }
 
   showModal(`
     <div class="modal-head"><h3>Spaltenzuordnung${manual?' bearbeiten':''}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
       <p class="hint" style="margin-top:0">Ordne die Spalten deiner Datei den benötigten Feldern zu. Diese Zuordnung wird gespeichert und beim nächsten Import automatisch wiederverwendet.</p>
-      ${rowsHtml}
+      ${bodyHtml}
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
@@ -759,7 +780,9 @@ function openMappingModal(manual){
 }
 
 function confirmMapping(manual){
-  const fields = ['kundencode','vorgang','telefonnummer','adresse','zaehlerplatzId','koordinaten'];
+  const fields = ['kundencode','vorgang','telefonnummer','zaehlerplatzId',
+    'adresse','strasse','hausnummer','hausnummerzusatz','ortsteil','ort',
+    'breite','laenge','koordinaten'];
   const mapping = {};
   for(const f of fields){
     const el = document.getElementById('map_'+f);
@@ -779,6 +802,40 @@ function confirmMapping(manual){
   }
 }
 
+function toStr(v){ return (v === undefined || v === null) ? '' : v.toString(); }
+
+function buildAddress(raw, m){
+  if(m.adresse && toStr(raw[m.adresse]).trim()){
+    return toStr(raw[m.adresse]).trim();
+  }
+  const strasse = m.strasse ? toStr(raw[m.strasse]).trim() : '';
+  const hausnr = m.hausnummer ? toStr(raw[m.hausnummer]).trim() : '';
+  const hausnrZusatz = m.hausnummerzusatz ? toStr(raw[m.hausnummerzusatz]).trim() : '';
+  const ortsteil = m.ortsteil ? toStr(raw[m.ortsteil]).trim() : '';
+  const ort = m.ort ? toStr(raw[m.ort]).trim() : '';
+
+  const strassenteil = [strasse, (hausnr + hausnrZusatz)].filter(Boolean).join(' ');
+  const parts = [strassenteil, ortsteil, ort].filter(Boolean);
+  return parts.join(', ');
+}
+
+function buildCoords(raw, m){
+  if(m.breite && m.laenge){
+    const latRaw = toStr(raw[m.breite]).trim().replace(',', '.');
+    const lonRaw = toStr(raw[m.laenge]).trim().replace(',', '.');
+    const lat = parseFloat(latRaw);
+    const lon = parseFloat(lonRaw);
+    if(!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180){
+      return { lat, lon };
+    }
+    return null;
+  }
+  if(m.koordinaten){
+    return parseCoords(raw[m.koordinaten]);
+  }
+  return null;
+}
+
 function runImport(){
   if(!pendingCsvRows || !columnMapping){ return; }
   const m = columnMapping;
@@ -791,16 +848,16 @@ function runImport(){
   );
 
   for(const raw of pendingCsvRows){
-    const kundencode = (m.kundencode ? raw[m.kundencode] : '') || '';
-    const vorgang = (m.vorgang ? raw[m.vorgang] : '') || '';
+    const kundencode = toStr(m.kundencode ? raw[m.kundencode] : '');
+    const vorgang = toStr(m.vorgang ? raw[m.vorgang] : '');
     if(!kundencode.trim() || !vorgang.trim()){ skippedEmpty++; continue; }
     const key = norm(kundencode) + '|' + norm(vorgang);
     if(existingKeys.has(key)){ skippedDup++; continue; }
 
-    const telefonnummer = (m.telefonnummer ? raw[m.telefonnummer] : '') || '';
-    const adresse = (m.adresse ? raw[m.adresse] : '') || '';
-    const zaehlerplatzId = (m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '') || '';
-    const koordinaten = m.koordinaten ? parseCoords(raw[m.koordinaten]) : null;
+    const telefonnummer = toStr(m.telefonnummer ? raw[m.telefonnummer] : '');
+    const adresse = buildAddress(raw, m);
+    const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
+    const koordinaten = buildCoords(raw, m);
 
     const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, adresse, zaehlerplatzId, koordinaten });
 
