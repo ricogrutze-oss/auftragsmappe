@@ -1177,7 +1177,62 @@ function renderEinstellungen(){
       </div>
       <p class="hint">${escapeHtml(syncText)}</p>
     </div>
+
+    <div class="settings-section" style="border-color:var(--red-bg)">
+      <h4 style="color:var(--red)">Daten zurücksetzen</h4>
+      <div class="settings-row">
+        <button class="btn danger" onclick="confirmResetAuftraege()">Alle Aufträge löschen</button>
+        <button class="btn danger" onclick="confirmResetAdressbuch()">Adressbuch löschen</button>
+        <button class="btn" onclick="confirmResetMapping()">Spaltenzuordnung zurücksetzen</button>
+      </div>
+      <p class="hint">Zum Testen einer neuen Datenstruktur reicht meist „Alle Aufträge löschen" + „Spaltenzuordnung zurücksetzen". Das Adressbuch ist bewusst dauerhaft — lösche es nur, wenn du wirklich neu anfangen willst.</p>
+    </div>
   `;
+}
+
+function confirmResetAuftraege(){
+  showModal(`
+    <div class="modal-head"><h3>Alle Aufträge löschen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle offenen und erledigten Aufträge inkl. Verlauf unwiderruflich. Das Adressbuch bleibt unberührt. Nicht rückgängig zu machen.</p></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetAuftraege()">Endgültig löschen</button></div>
+  `);
+}
+function doResetAuftraege(){
+  auftraege = [];
+  saveAuftraege();
+  closeModal();
+  render();
+  showToast('Alle Aufträge gelöscht');
+}
+
+function confirmResetAdressbuch(){
+  showModal(`
+    <div class="modal-head"><h3>Adressbuch löschen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle Adressbuch-Einträge inkl. Verlauf unwiderruflich — auch die, die nicht mehr aus offenen Aufträgen stammen. Nicht rückgängig zu machen.</p></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetAdressbuch()">Endgültig löschen</button></div>
+  `);
+}
+function doResetAdressbuch(){
+  adressbuch = [];
+  saveAdressbuch();
+  closeModal();
+  render();
+  showToast('Adressbuch gelöscht');
+}
+
+function confirmResetMapping(){
+  showModal(`
+    <div class="modal-head"><h3>Spaltenzuordnung zurücksetzen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Beim nächsten Import fragt die App die Spaltenzuordnung erneut ab. Bereits importierte Daten bleiben davon unberührt.</p></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn primary" onclick="doResetMapping()">Zurücksetzen</button></div>
+  `);
+}
+function doResetMapping(){
+  columnMapping = null;
+  saveMapping();
+  closeModal();
+  render();
+  showToast('Spaltenzuordnung zurückgesetzt');
 }
 
 function renderTabView(tabKey, list){
