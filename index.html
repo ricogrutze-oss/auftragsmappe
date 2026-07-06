@@ -15,6 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <style>
@@ -360,7 +361,7 @@
   <div id="view-einstellungen" style="display:none"></div>
 </main>
 
-<input type="file" id="csvInput" accept=".csv" style="display:none">
+<input type="file" id="csvInput" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" style="display:none">
 <input type="file" id="backupInput" accept=".json" style="display:none">
 
 <div class="toast" id="toast"></div>
@@ -600,7 +601,7 @@ function upsertAdrFromImport(row){
       adresse: row.adresse || '',
       telefonnummer: row.telefonnummer || '',
       koordinaten: row.koordinaten || null,
-      history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus CSV-Import' }]
+      history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus Datei-Import' }]
     };
     adressbuch.push(entry);
   } else {
@@ -657,25 +658,60 @@ function updateAdrField(entryId, field, newVal){
 }
 
 /* ---------------------------------------------------------------
-   CSV Import
+   File Import (CSV/TSV via PapaParse, Excel/ODS via SheetJS)
 --------------------------------------------------------------- */
 document.getElementById('csvInput').addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
-  Papa.parse(file, {
-    header: true,
-    skipEmptyLines: true,
-    complete: function(results){
-      pendingCsvRows = results.data;
-      pendingCsvHeaders = results.meta.fields || [];
-      if(!columnMapping || !mappingMatchesHeaders(pendingCsvHeaders)){
-        openMappingModal(false);
-      } else {
-        runImport();
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+
+  function proceed(rows, headers, sheetInfo){
+    if(!rows || rows.length === 0){
+      showToast('Keine Zeilen in der Datei gefunden');
+      return;
+    }
+    pendingCsvRows = rows;
+    pendingCsvHeaders = headers;
+    if(sheetInfo) showToast(sheetInfo);
+    if(!columnMapping || !mappingMatchesHeaders(pendingCsvHeaders)){
+      openMappingModal(false);
+    } else {
+      runImport();
+    }
+  }
+
+  if(ext === 'csv' || ext === 'tsv' || ext === 'txt'){
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: function(results){
+        proceed(results.data, results.meta.fields || []);
+      },
+      error: function(err){ showToast('Datei konnte nicht gelesen werden'); }
+    });
+  } else if(ext === 'xlsx' || ext === 'xls' || ext === 'ods') {
+    const reader = new FileReader();
+    reader.onload = function(evt){
+      try{
+        const data = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(data, { type: 'array' });
+        const sheetName = wb.SheetNames[0];
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
+        const headers = rows.length ? Object.keys(rows[0]) : (XLSX.utils.sheet_to_json(sheet, { header:1 })[0] || []);
+        const info = wb.SheetNames.length > 1
+          ? `Tabellenblatt "${sheetName}" verwendet (von ${wb.SheetNames.length} Blättern)`
+          : null;
+        proceed(rows, headers, info);
+      }catch(err){
+        showToast('Excel-Datei konnte nicht gelesen werden');
       }
-    },
-    error: function(err){ showToast('CSV konnte nicht gelesen werden'); }
-  });
+    };
+    reader.onerror = function(){ showToast('Datei konnte nicht gelesen werden'); };
+    reader.readAsArrayBuffer(file);
+  } else {
+    showToast('Nicht unterstütztes Dateiformat: .' + ext);
+  }
   e.target.value = '';
 });
 
@@ -706,13 +742,13 @@ function openMappingModal(manual){
   }).join('');
 
   if(headers.length === 0){
-    rowsHtml = `<p class="hint">Noch keine Spalten bekannt. Bitte zuerst eine CSV-Datei importieren.</p>`;
+    rowsHtml = `<p class="hint">Noch keine Spalten bekannt. Bitte zuerst eine Datei importieren.</p>`;
   }
 
   showModal(`
     <div class="modal-head"><h3>Spaltenzuordnung${manual?' bearbeiten':''}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <p class="hint" style="margin-top:0">Ordne die Spalten deiner CSV-Datei den benötigten Feldern zu. Diese Zuordnung wird gespeichert und beim nächsten Import automatisch wiederverwendet.</p>
+      <p class="hint" style="margin-top:0">Ordne die Spalten deiner Datei den benötigten Feldern zu. Diese Zuordnung wird gespeichert und beim nächsten Import automatisch wiederverwendet.</p>
       ${rowsHtml}
     </div>
     <div class="modal-foot">
@@ -781,7 +817,7 @@ function runImport(){
       kommentar: '',
       termin: null,
       importedAt: nowIso(),
-      history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus CSV-Import' }]
+      history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus Datei-Import' }]
     });
     existingKeys.add(key);
     added++;
@@ -1019,8 +1055,8 @@ function render(){
 function renderEinstellungen(){
   const lp = settings.lastImport;
   const lastImportText = lp
-    ? `Letzter CSV-Import: ${fmtTs(lp.ts)} · +${lp.added} neu · ${lp.skippedDup} Duplikate übersprungen`
-    : 'Noch kein CSV-Import';
+    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu · ${lp.skippedDup} Duplikate übersprungen`
+    : 'Noch kein Import';
 
   const syncBits = [];
   if(settings.lastExport) syncBits.push('Sicherung exportiert: ' + fmtTs(settings.lastExport));
@@ -1033,7 +1069,7 @@ function renderEinstellungen(){
     <div class="settings-section">
       <h4>Daten importieren</h4>
       <div class="settings-row">
-        <button class="btn primary" onclick="document.getElementById('csvInput').click()">CSV importieren</button>
+        <button class="btn primary" onclick="document.getElementById('csvInput').click()">Datei importieren (CSV/Excel)</button>
         <button class="btn" onclick="openMappingModal(true)">Spaltenzuordnung</button>
       </div>
       <p class="hint">${escapeHtml(lastImportText)}</p>
@@ -1158,7 +1194,7 @@ function renderAuftragTable(list, isErledigtTab){
   if(list.length === 0){
     return `<div class="empty-state">
       <div class="big">${isErledigtTab ? 'Noch keine erledigten Vorgänge' : 'Keine offenen Vorgänge'}</div>
-      <div>${isErledigtTab ? 'Erledigte Aufträge erscheinen hier automatisch.' : 'Importiere eine CSV-Datei, um Vorgänge anzulegen.'}</div>
+      <div>${isErledigtTab ? 'Erledigte Aufträge erscheinen hier automatisch.' : 'Importiere eine CSV- oder Excel-Datei, um Vorgänge anzulegen.'}</div>
     </div>`;
   }
   const vc = settings.visibleColumns || DEFAULT_VISIBLE_COLUMNS;
@@ -1224,7 +1260,7 @@ function renderAdressbuch(){
   if(adressbuch.length === 0){
     return `<div class="empty-state">
       <div class="big">Adressbuch ist leer</div>
-      <div>Einträge entstehen automatisch beim CSV-Import und bleiben dauerhaft erhalten.</div>
+      <div>Einträge entstehen automatisch beim Import und bleiben dauerhaft erhalten.</div>
     </div>`;
   }
   const rows = adressbuch.slice().sort((a,b)=>(a.adresse||'').localeCompare(b.adresse||'')).map(e => `
