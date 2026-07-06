@@ -48,6 +48,7 @@
     --font-mono: 'IBM Plex Mono', monospace;
   }
   *{box-sizing:border-box;}
+  html{ overflow-x:hidden; width:100%; }
   body{
     margin:0;
     background:var(--bg);
@@ -55,6 +56,8 @@
     font-family:var(--font-body);
     font-size:14px;
     -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+    width:100%;
   }
   ::selection{ background:var(--teal); color:#fff; }
 
@@ -207,6 +210,20 @@
   tbody tr:last-child td{ border-bottom:none; }
   tbody tr:hover{ background:#fafcfb; }
   .code{ font-family:var(--font-mono); font-size:12.5px; color:var(--teal-deep); font-weight:600; }
+  .code-sm{ font-family:var(--font-mono); font-size:11px; color:var(--ink-soft); font-weight:500; letter-spacing:.01em; }
+  .ro-value{ font-size:13px; color:var(--ink); line-height:1.4; }
+  .ro-info-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:10px 16px;
+    margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--line-soft);
+  }
+  .ro-info-item{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .ro-info-label{ font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); }
+  .ro-info-val{ font-size:13.5px; color:var(--ink); word-break:break-word; }
+  .custom-field-list{ display:flex; flex-direction:column; gap:4px; margin-bottom:4px; }
+  .custom-field-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:6px 10px; background:#f6f8f7; border-radius:6px; font-size:13px;
+  }
   .muted{ color:var(--ink-soft); }
   .cell-input{
     width:100%;
@@ -356,8 +373,10 @@
   .adr-card{
     background:var(--panel); border:1px solid var(--line); border-radius:10px;
     padding:14px 16px; display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap;
+    max-width:100%; box-sizing:border-box;
   }
-  .adr-card-main{ flex:1; min-width:200px; display:flex; flex-direction:column; gap:4px; }
+  .adr-card-main{ flex:1 1 160px; min-width:0; display:flex; flex-direction:column; gap:4px; }
+  .adr-name-input, .adr-addr-input, .adr-phone-input{ width:100%; max-width:100%; box-sizing:border-box; }
   .adr-name-input{
     border:none; background:transparent; font-family:var(--font-display); font-weight:700;
     font-size:15.5px; color:var(--ink); padding:2px 4px; border-radius:5px;
@@ -375,6 +394,7 @@
   .adr-card-actions{ display:flex; gap:6px; flex-shrink:0; }
   .adr-card-details{
     width:100%; margin-top:8px; padding-top:12px; border-top:1px solid var(--line-soft);
+    box-sizing:border-box;
   }
   .view-toggle .btn.active{ background:var(--teal); border-color:var(--teal); color:#fff; }
   .settings-section{
@@ -412,6 +432,9 @@
     .modal-backdrop{ padding:0; align-items:flex-end; }
     .modal{ max-width:100%; max-height:92vh; border-radius:16px 16px 0 0; }
     .field-row{ flex-wrap:wrap; }
+    .ro-info-grid{ grid-template-columns:1fr; }
+    .adr-card{ flex-direction:column; align-items:stretch; }
+    .adr-card-actions{ justify-content:flex-end; }
   }
 </style>
 </head>
@@ -470,13 +493,14 @@ let historyModalTarget = null;
 let viewMode = { offen: 'liste', erledigt: 'liste' };
 let mapInstances = {};
 const DEFAULT_VISIBLE_COLUMNS = {
-  kundenname: true, vorgang: true, status: true, telefonnummer: true, email: true, adresse: true,
+  kundenname: true, vorgang: true, auftragsbeschreibung: true, status: true, telefonnummer: true, email: true, adresse: true,
   standort: true, zaehler: true, bauform: true,
   kommentar: true, termin: true, inbetriebnahmeDatum: true, koordinaten: true
 };
 const COLUMN_DEFS = [
   { key:'kundenname', label:'Kundenname' },
   { key:'vorgang', label:'Vorgang' },
+  { key:'auftragsbeschreibung', label:'Auftragsbeschreibung' },
   { key:'status', label:'Status' },
   { key:'telefonnummer', label:'Telefon' },
   { key:'email', label:'E-Mail' },
@@ -552,6 +576,7 @@ async function loadAll(){
   // fill in any newly introduced columns for users with an older saved settings object
   DEFAULT_COLUMN_ORDER.forEach(k => { if(!(k in settings.visibleColumns)) settings.visibleColumns[k] = true; });
   if(!settings.columnOrder){ settings.columnOrder = DEFAULT_COLUMN_ORDER.slice(); }
+  if(!settings.customFields){ settings.customFields = []; }
   // include any new columns that aren't in a saved order yet (appended at the end)
   DEFAULT_COLUMN_ORDER.forEach(k => { if(!settings.columnOrder.includes(k)) settings.columnOrder.push(k); });
   try{ const v = await kvGet('column-mapping'); columnMapping = v ? JSON.parse(v) : null; }catch(e){ columnMapping = null; }
@@ -748,6 +773,15 @@ function updateAdrCoords(entryId, coords){
   entry.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: newStr });
   entry.koordinaten = coords;
   saveAdressbuch();
+
+  const linked = auftraege.filter(a => a.adrEntryId === entryId);
+  if(linked.length){
+    linked.forEach(a => {
+      a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: newStr });
+      a.koordinaten = coords;
+    });
+    saveAuftraege();
+  }
 }
 function updateAdrField(entryId, field, newVal){
   const entry = adressbuch.find(a => a.id === entryId);
@@ -757,6 +791,18 @@ function updateAdrField(entryId, field, newVal){
   entry.history.push({ ts: nowIso(), field, old: oldVal, new: newVal });
   entry[field] = newVal;
   saveAdressbuch();
+
+  // push master-data corrections down into any linked Aufträge (read-only there)
+  const linked = auftraege.filter(a => a.adrEntryId === entryId);
+  if(linked.length){
+    linked.forEach(a => {
+      if(field in a){
+        a.history.push({ ts: nowIso(), field, old: a[field]||'', new: newVal });
+        a[field] = newVal;
+      }
+    });
+    saveAuftraege();
+  }
 }
 
 /* ---------------------------------------------------------------
@@ -828,6 +874,7 @@ function openMappingModal(manual){
   const basicFields = [
     { key:'kundencode', label:'Kundencode', required:true },
     { key:'vorgang', label:'Vorgang', required:true },
+    { key:'auftragsbeschreibung', label:'Auftragsbeschreibung', required:false },
     { key:'telefonnummer', label:'Telefonnummer', required:false },
     { key:'email', label:'E-Mail', required:false },
     { key:'zaehlerplatzId', label:'Zählerplatz-ID', required:false },
@@ -897,7 +944,7 @@ function openMappingModal(manual){
 }
 
 function confirmMapping(manual){
-  const fields = ['kundencode','vorgang','telefonnummer','email','zaehlerplatzId',
+  const fields = ['kundencode','vorgang','auftragsbeschreibung','telefonnummer','email','zaehlerplatzId',
     'kundenname','vorname','nachname',
     'adresse','strasse','hausnummer','hausnummerzusatz','ortsteil','ort',
     'zaehler','bauform','standort',
@@ -921,7 +968,14 @@ function confirmMapping(manual){
   }
 }
 
-function toStr(v){ return (v === undefined || v === null) ? '' : v.toString(); }
+function toStr(v){
+  if(v === undefined || v === null) return '';
+  let s = v.toString().trim();
+  // Excel sometimes stores identifiers (meter numbers etc.) as numbers,
+  // which surfaces as a trailing ".0" once converted to text — strip that.
+  if(/^\d+\.0$/.test(s)) s = s.slice(0, -2);
+  return s;
+}
 
 function buildAddress(raw, m){
   if(m.adresse && toStr(raw[m.adresse]).trim()){
@@ -934,7 +988,7 @@ function buildAddress(raw, m){
   const ort = m.ort ? toStr(raw[m.ort]).trim() : '';
 
   const strassenteil = [strasse, (hausnr + hausnrZusatz)].filter(Boolean).join(' ');
-  const parts = [strassenteil, ortsteil, ort].filter(Boolean);
+  const parts = [ortsteil, strassenteil, ort].filter(Boolean);
   return parts.join(', ');
 }
 
@@ -984,6 +1038,7 @@ function runImport(){
 
     const telefonnummer = toStr(m.telefonnummer ? raw[m.telefonnummer] : '');
     const email = toStr(m.email ? raw[m.email] : '');
+    const auftragsbeschreibung = toStr(m.auftragsbeschreibung ? raw[m.auftragsbeschreibung] : '');
     const adresse = buildAddress(raw, m);
     const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
     const koordinaten = buildCoords(raw, m);
@@ -998,6 +1053,7 @@ function runImport(){
       id: uid(),
       kundencode: kundencode.trim(),
       vorgang: vorgang.trim(),
+      auftragsbeschreibung: auftragsbeschreibung,
       telefonnummer: telefonnummer || adrEntry.telefonnummer || '',
       email: email || adrEntry.email || '',
       adresse: adresse || adrEntry.adresse || '',
@@ -1164,9 +1220,10 @@ function renderColumnPickerRows(){
 }
 
 function openColumnPicker(){
-  const order = (settings.columnOrder && settings.columnOrder.length) ? settings.columnOrder : DEFAULT_COLUMN_ORDER;
+  let order = (settings.columnOrder && settings.columnOrder.length) ? settings.columnOrder.slice() : DEFAULT_COLUMN_ORDER.slice();
+  (settings.customFields||[]).forEach(cf => { if(!order.includes(cf.key)) order.push(cf.key); });
   const vc = settings.visibleColumns || DEFAULT_VISIBLE_COLUMNS;
-  tempColumnOrder = order.filter(k => COLUMN_LABELS[k]).map(k => ({ key:k, label:COLUMN_LABELS[k], visible: vc[k] !== false }));
+  tempColumnOrder = order.filter(k => getColumnLabel(k)).map(k => ({ key:k, label:getColumnLabel(k), visible: vc[k] !== false }));
 
   showModal(`
     <div class="modal-head"><h3>Sichtbare Spalten &amp; Reihenfolge</h3><button class="close-x" onclick="closeModal()">✕</button></div>
@@ -1199,6 +1256,37 @@ function saveColumnPicker(){
   closeModal();
   render();
   showToast('Spaltenansicht gespeichert');
+}
+
+function slugify(label){
+  return 'cf_' + label.toString().trim().toLowerCase()
+    .replace(/[äÄ]/g,'ae').replace(/[öÖ]/g,'oe').replace(/[üÜ]/g,'ue').replace(/ß/g,'ss')
+    .replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || ('feld' + Date.now());
+}
+
+function addCustomField(){
+  const input = document.getElementById('newCustomFieldLabel');
+  const label = input ? input.value.trim() : '';
+  if(!label){ showToast('Bitte einen Namen für das Feld eingeben'); return; }
+  if(!settings.customFields) settings.customFields = [];
+  let key = slugify(label);
+  let n = 1;
+  while(settings.customFields.some(cf => cf.key === key) || COLUMN_LABELS[key]){
+    key = slugify(label) + '_' + (++n);
+  }
+  settings.customFields.push({ key, label });
+  if(!settings.visibleColumns) settings.visibleColumns = {};
+  settings.visibleColumns[key] = true;
+  saveSettings();
+  render();
+  showToast('Feld „' + label + '" hinzugefügt');
+}
+
+function removeCustomField(key){
+  settings.customFields = (settings.customFields||[]).filter(cf => cf.key !== key);
+  saveSettings();
+  render();
+  showToast('Feld entfernt (bereits eingetragene Werte in Aufträgen bleiben erhalten)');
 }
 
 /* ---------------------------------------------------------------
@@ -1364,6 +1452,25 @@ function renderEinstellungen(){
       <div class="settings-row">
         <button class="btn" onclick="openColumnPicker()">👁 Sichtbare Spalten</button>
       </div>
+    </div>
+
+    <div class="settings-section">
+      <h4>Eigene Felder</h4>
+      ${(settings.customFields||[]).length === 0 ? '<p class="hint" style="margin-top:0">Noch keine eigenen Felder angelegt.</p>' : `
+        <div class="custom-field-list">
+          ${settings.customFields.map(cf => `
+            <div class="custom-field-row">
+              <span>${escapeHtml(cf.label)}</span>
+              <button class="icon-btn" onclick="removeCustomField('${cf.key}')" title="Entfernen">🗑</button>
+            </div>
+          `).join('')}
+        </div>
+      `}
+      <div class="settings-row" style="margin-top:10px">
+        <input type="text" id="newCustomFieldLabel" placeholder="Name des neuen Feldes" style="flex:1;min-width:160px;padding:8px 11px;border:1px solid var(--line);border-radius:6px;font-size:13.5px">
+        <button class="btn" onclick="addCustomField()">+ Feld hinzufügen</button>
+      </div>
+      <p class="hint">Eigene Felder erscheinen als zusätzliche, frei editierbare Spalte in der Auftragstabelle und im Bearbeiten-Fenster.</p>
     </div>
 
     <div class="settings-section">
@@ -1656,32 +1763,36 @@ function searchPhoneForAdr(id){
   if(!e) return;
   window.open(phoneSearchUrl(e.kundenname || e.kundencode, e.adresse), '_blank');
 }
-function telefonCellWithSearch(a, idPrefix){
+function telefonCellWithSearch(a){
   const btn = !a.telefonnummer
     ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`
     : '';
   return `<td data-label="${COLUMN_LABELS.telefonnummer}">
-      <div style="display:flex;gap:4px;align-items:center">
-        <input class="cell-input" type="text" value="${escapeHtml(a.telefonnummer)}"
-          onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1">
+      <div style="display:flex;gap:6px;align-items:center">
+        <span class="ro-value">${escapeHtml(a.telefonnummer) || '<span class=\'muted\'>–</span>'}</span>
         ${btn}
       </div>
     </td>`;
 }
+function readonlyCell(a, key, label){
+  const val = a[key];
+  return `<td data-label="${label}"><span class="ro-value">${escapeHtml(val) || '<span class=\'muted\'>–</span>'}</span></td>`;
+}
 const CELL_RENDERERS = {
-  kundenname: (a) => simpleTextCell(a, 'kundenname', COLUMN_LABELS.kundenname),
+  kundenname: (a) => readonlyCell(a, 'kundenname', COLUMN_LABELS.kundenname),
   vorgang: (a) => `<td data-label="${COLUMN_LABELS.vorgang}">${escapeHtml(a.vorgang)}</td>`,
+  auftragsbeschreibung: (a) => `<td data-label="${COLUMN_LABELS.auftragsbeschreibung}"><span class="ro-value">${escapeHtml(a.auftragsbeschreibung) || '<span class=\'muted\'>–</span>'}</span></td>`,
   status: (a) => `<td data-label="${COLUMN_LABELS.status}">
       <select class="status-select ${STATUS[a.status].cls}" onchange="setStatus('${a.id}', this.value)">
         ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
       </select>
     </td>`,
   telefonnummer: (a) => telefonCellWithSearch(a),
-  email: (a) => simpleTextCell(a, 'email', COLUMN_LABELS.email, 'name@beispiel.de'),
-  adresse: (a) => simpleTextCell(a, 'adresse', COLUMN_LABELS.adresse),
-  standort: (a) => simpleTextCell(a, 'standort', COLUMN_LABELS.standort),
-  zaehler: (a) => simpleTextCell(a, 'zaehler', COLUMN_LABELS.zaehler),
-  bauform: (a) => simpleTextCell(a, 'bauform', COLUMN_LABELS.bauform),
+  email: (a) => readonlyCell(a, 'email', COLUMN_LABELS.email),
+  adresse: (a) => readonlyCell(a, 'adresse', COLUMN_LABELS.adresse),
+  standort: (a) => readonlyCell(a, 'standort', COLUMN_LABELS.standort),
+  zaehler: (a) => readonlyCell(a, 'zaehler', COLUMN_LABELS.zaehler),
+  bauform: (a) => readonlyCell(a, 'bauform', COLUMN_LABELS.bauform),
   kommentar: (a) => `<td data-label="${COLUMN_LABELS.kommentar}">
       <textarea class="cell-input" rows="1" onchange="updateAuftragField('${a.id}','kommentar', this.value)" placeholder="Notiz…">${escapeHtml(a.kommentar)}</textarea>
     </td>`,
@@ -1692,16 +1803,32 @@ const CELL_RENDERERS = {
       <input class="cell-input" type="date" value="${escapeHtml(a.inbetriebnahmeDatum||'')}"
         onchange="updateAuftragField('${a.id}','inbetriebnahmeDatum', this.value)">
     </td>`,
-  koordinaten: (a) => `<td data-label="${COLUMN_LABELS.koordinaten}">
-      <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(a.koordinaten))}"
-        onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px">
-    </td>`,
+  koordinaten: (a) => `<td data-label="${COLUMN_LABELS.koordinaten}"><span class="ro-value" style="font-family:var(--font-mono);font-size:12px">${escapeHtml(fmtCoords(a.koordinaten)) || '<span class=\'muted\'>–</span>'}</span></td>`,
 };
 
+function getCellRenderer(key){
+  if(CELL_RENDERERS[key]) return CELL_RENDERERS[key];
+  const cf = (settings.customFields||[]).find(c => c.key === key);
+  if(cf){
+    return (a) => `<td data-label="${escapeHtml(cf.label)}">
+      <input class="cell-input" type="text" value="${escapeHtml(a.customFields ? a.customFields[key] : '')}"
+        onchange="updateCustomField('${a.id}','${key}', this.value)" placeholder="–">
+    </td>`;
+  }
+  return null;
+}
+
 function getOrderedVisibleColumns(){
-  const order = (settings.columnOrder && settings.columnOrder.length) ? settings.columnOrder : DEFAULT_COLUMN_ORDER;
+  let order = (settings.columnOrder && settings.columnOrder.length) ? settings.columnOrder.slice() : DEFAULT_COLUMN_ORDER.slice();
   const vc = settings.visibleColumns || DEFAULT_VISIBLE_COLUMNS;
-  return order.filter(k => vc[k] !== false && CELL_RENDERERS[k]);
+  (settings.customFields||[]).forEach(cf => { if(!order.includes(cf.key)) order.push(cf.key); });
+  return order.filter(k => vc[k] !== false && getCellRenderer(k));
+}
+
+function getColumnLabel(key){
+  if(COLUMN_LABELS[key]) return COLUMN_LABELS[key];
+  const cf = (settings.customFields||[]).find(c => c.key === key);
+  return cf ? cf.label : key;
 }
 
 function renderAuftragTable(list, isErledigtTab){
@@ -1715,8 +1842,8 @@ function renderAuftragTable(list, isErledigtTab){
 
   const rows = list.slice().sort((a,b) => (a.kundencode||'').localeCompare(b.kundencode||'')).map(a => `
     <tr>
-      <td data-label="Kundencode"><span class="code">${escapeHtml(a.kundencode)}</span></td>
-      ${cols.map(key => CELL_RENDERERS[key](a)).join('')}
+      <td data-label="Kundencode"><span class="code-sm">${escapeHtml(a.kundencode)}</span></td>
+      ${cols.map(key => getCellRenderer(key)(a)).join('')}
       <td data-label="Aktionen">
         <div class="row-actions">
           <button class="icon-btn" onclick="openAuftragEditModal('${a.id}')" title="Bearbeiten">✏️</button>
@@ -1728,7 +1855,7 @@ function renderAuftragTable(list, isErledigtTab){
   `).join('');
 
   const headCells = ['<th>Kundencode</th>']
-    .concat(cols.map(key => `<th>${COLUMN_LABELS[key]}</th>`))
+    .concat(cols.map(key => `<th>${getColumnLabel(key)}</th>`))
     .concat(['<th></th>'])
     .join('');
 
@@ -1822,6 +1949,18 @@ function updateAdrCoordsField(entryId, value){
 /* ---------------------------------------------------------------
    Field updates
 --------------------------------------------------------------- */
+function updateCustomField(id, key, value, silent){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  if(!a.customFields) a.customFields = {};
+  const oldVal = a.customFields[key] || '';
+  if(oldVal === value) return;
+  a.history.push({ ts: nowIso(), field: key, old: oldVal, new: value });
+  a.customFields[key] = value;
+  saveAuftraege();
+  if(!silent) showToast('Gespeichert');
+}
+
 function updateAuftragField(id, field, value, silent){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
@@ -1862,46 +2001,58 @@ function setStatus(id, newStatus, silent){
 function openAuftragEditModal(id){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
-  const field = (key, label, value, placeholder) => `
-    <div class="field">
-      <label>${label}</label>
-      <input type="text" id="edit_${key}" value="${escapeHtml(value||'')}" placeholder="${placeholder||''}">
-    </div>`;
+
+  const infoRow = (label, value) => value
+    ? `<div class="ro-info-item"><span class="ro-info-label">${label}</span><span class="ro-info-val">${escapeHtml(value)}</span></div>`
+    : '';
 
   showModal(`
-    <div class="modal-head"><h3>${escapeHtml(a.kundencode)} · ${escapeHtml(a.vorgang)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head">
+      <h3><span class="code-sm">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.vorgang)}</h3>
+      <button class="close-x" onclick="closeModal()">✕</button>
+    </div>
     <div class="modal-body">
-      <div class="field">
-        <label>Status</label>
-        <select id="edit_status">
-          ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
-        </select>
+      <div class="ro-info-grid">
+        ${infoRow('Kundenname', a.kundenname)}
+        ${infoRow('Adresse', a.adresse)}
+        ${infoRow('Standort', a.standort)}
+        ${infoRow('Zähler', a.zaehler)}
+        ${infoRow('Bauform', a.bauform)}
+        ${infoRow('Koordinaten', fmtCoords(a.koordinaten))}
+        ${infoRow('E-Mail', a.email)}
       </div>
-      ${field('kundenname','Kundenname', a.kundenname)}
-      <div class="field">
-        <label>Telefon</label>
-        <div style="display:flex;gap:6px">
-          <input type="text" id="edit_telefonnummer" value="${escapeHtml(a.telefonnummer||'')}" style="flex:1">
-          ${!a.telefonnummer ? `<button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button>` : ''}
+      <div class="ro-info-item" style="margin-bottom:12px">
+        <span class="ro-info-label">Telefon</span>
+        <span class="ro-info-val" style="display:flex;align-items:center;gap:8px">
+          ${a.telefonnummer ? escapeHtml(a.telefonnummer) : `<span class="muted">–</span>
+            <button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button>`}
+        </span>
+      </div>
+      ${a.auftragsbeschreibung ? `<div class="field"><label>Auftragsbeschreibung</label><p class="ro-value" style="white-space:pre-line">${escapeHtml(a.auftragsbeschreibung)}</p></div>` : ''}
+      <p class="hint">Diese Stammdaten kannst du im Adressbuch korrigieren, falls sie fehlerhaft sind. Hier bearbeitbar sind Status, Notiz, Inbetriebnahme-Datum und Termin.</p>
+
+      <div class="field-row">
+        <div class="field">
+          <label>Status</label>
+          <select id="edit_status">
+            ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Inbetriebnahme am</label>
+          <input type="date" id="edit_inbetriebnahmeDatum" value="${escapeHtml(a.inbetriebnahmeDatum||'')}">
         </div>
       </div>
-      ${field('email','E-Mail', a.email, 'name@beispiel.de')}
-      ${field('adresse','Adresse', a.adresse)}
-      ${field('standort','Standort', a.standort)}
-      ${field('zaehler','Zähler', a.zaehler)}
-      ${field('bauform','Bauform Zähler', a.bauform)}
       <div class="field">
-        <label>Inbetriebnahme am</label>
-        <input type="date" id="edit_inbetriebnahmeDatum" value="${escapeHtml(a.inbetriebnahmeDatum||'')}">
-      </div>
-      <div class="field">
-        <label>Kommentar</label>
+        <label>Notiz</label>
         <textarea id="edit_kommentar" rows="3">${escapeHtml(a.kommentar||'')}</textarea>
       </div>
+      ${renderCustomFieldInputs(a)}
       ${a.termin ? `<p class="hint">Termin: <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
       <div class="settings-row" style="margin-top:6px">
         <button class="btn small" onclick="openTerminModal('${a.id}')">📅 Termin</button>
         <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
+        <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Im Adressbuch öffnen</button>
       </div>
     </div>
     <div class="modal-foot">
@@ -1911,8 +2062,25 @@ function openAuftragEditModal(id){
   `);
 }
 
+function renderCustomFieldInputs(a){
+  const custom = settings.customFields || [];
+  if(custom.length === 0) return '';
+  return custom.map(cf => `
+    <div class="field">
+      <label>${escapeHtml(cf.label)}</label>
+      <input type="text" id="edit_cf_${cf.key}" value="${escapeHtml(a.customFields ? (a.customFields[cf.key]||'') : '')}">
+    </div>`).join('');
+}
+
+function jumpToAdressbuch(entryId){
+  closeModal();
+  switchTab('adressbuch');
+  if(entryId){ adrDetailsOpen[entryId] = true; }
+  render();
+}
+
 function saveAuftragEditModal(id){
-  const keys = ['kundenname','telefonnummer','email','adresse','standort','zaehler','bauform','inbetriebnahmeDatum'];
+  const keys = ['inbetriebnahmeDatum'];
   keys.forEach(k => {
     const el = document.getElementById('edit_'+k);
     if(el) updateAuftragField(id, k, el.value, true);
@@ -1921,6 +2089,10 @@ function saveAuftragEditModal(id){
   if(kommentarEl) updateAuftragField(id, 'kommentar', kommentarEl.value, true);
   const statusEl = document.getElementById('edit_status');
   if(statusEl) setStatus(id, statusEl.value, true);
+  (settings.customFields||[]).forEach(cf => {
+    const el = document.getElementById('edit_cf_'+cf.key);
+    if(el) updateCustomField(id, cf.key, el.value, true);
+  });
   closeModal();
   render();
   showToast('Gespeichert');
