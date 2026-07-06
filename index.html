@@ -310,7 +310,21 @@
     display:none;
   }
 
-  .view-toggle{ display:flex; gap:6px; margin-bottom:14px; }
+  .view-toggle{ display:flex; gap:6px; margin-bottom:14px; align-items:center; }
+  .filter-bar{
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    margin-bottom:12px; padding:12px; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px;
+  }
+  .filter-search{
+    flex:1; min-width:180px; padding:8px 12px; border:1px solid var(--line);
+    border-radius:20px; font-family:var(--font-body); font-size:13px;
+  }
+  .filter-search:focus{ outline:none; border-color:var(--teal); }
+  .filter-select{
+    padding:8px 12px; border:1px solid var(--line); border-radius:20px;
+    font-family:var(--font-body); font-size:12.5px; background:#fff; color:var(--ink);
+  }
   .view-toggle .btn.active{ background:var(--teal); border-color:var(--teal); color:#fff; }
   .settings-section{
     background:var(--panel); border:1px solid var(--line); border-radius:10px;
@@ -391,14 +405,19 @@ let historyModalTarget = null;
 let viewMode = { offen: 'liste', erledigt: 'liste' };
 let mapInstances = {};
 const DEFAULT_VISIBLE_COLUMNS = {
-  vorgang: true, status: true, telefonnummer: true, adresse: true,
+  kundenname: true, vorgang: true, status: true, telefonnummer: true, adresse: true,
+  standort: true, zaehler: true, bauform: true,
   kommentar: true, termin: true, koordinaten: true
 };
 const COLUMN_DEFS = [
+  { key:'kundenname', label:'Kundenname' },
   { key:'vorgang', label:'Vorgang' },
   { key:'status', label:'Status' },
   { key:'telefonnummer', label:'Telefon' },
   { key:'adresse', label:'Adresse' },
+  { key:'standort', label:'Standort' },
+  { key:'zaehler', label:'Zähler' },
+  { key:'bauform', label:'Bauform Zähler' },
   { key:'kommentar', label:'Kommentar' },
   { key:'termin', label:'Termin' },
   { key:'koordinaten', label:'Koordinaten' },
@@ -598,9 +617,13 @@ function upsertAdrFromImport(row){
       id: uid(),
       kundencode: row.kundencode || '',
       zaehlerplatzId: row.zaehlerplatzId || '',
+      kundenname: row.kundenname || '',
       adresse: row.adresse || '',
       telefonnummer: row.telefonnummer || '',
       koordinaten: row.koordinaten || null,
+      zaehler: row.zaehler || '',
+      bauform: row.bauform || '',
+      standort: row.standort || '',
       history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus Datei-Import' }]
     };
     adressbuch.push(entry);
@@ -609,6 +632,10 @@ function upsertAdrFromImport(row){
     if(!entry.adresse && row.adresse) entry.adresse = row.adresse;
     if(!entry.telefonnummer && row.telefonnummer) entry.telefonnummer = row.telefonnummer;
     if(!entry.koordinaten && row.koordinaten) entry.koordinaten = row.koordinaten;
+    if(!entry.kundenname && row.kundenname) entry.kundenname = row.kundenname;
+    if(!entry.zaehler && row.zaehler) entry.zaehler = row.zaehler;
+    if(!entry.bauform && row.bauform) entry.bauform = row.bauform;
+    if(!entry.standort && row.standort) entry.standort = row.standort;
   }
   return entry;
 }
@@ -729,6 +756,11 @@ function openMappingModal(manual){
     { key:'telefonnummer', label:'Telefonnummer', required:false },
     { key:'zaehlerplatzId', label:'Zählerplatz-ID', required:false },
   ];
+  const kundeFields = [
+    { key:'kundenname', label:'Kundenname (eine Spalte)' },
+    { key:'vorname', label:'Vorname' },
+    { key:'nachname', label:'Nachname' },
+  ];
   const addressFields = [
     { key:'adresse', label:'Adresse (eine Spalte)' },
     { key:'strasse', label:'Straße' },
@@ -736,6 +768,11 @@ function openMappingModal(manual){
     { key:'hausnummerzusatz', label:'Hausnummerzusatz' },
     { key:'ortsteil', label:'Ortsteil' },
     { key:'ort', label:'Ort' },
+  ];
+  const zaehlerFields = [
+    { key:'zaehler', label:'Zähler(-nummer)' },
+    { key:'bauform', label:'Bauform Zähler' },
+    { key:'standort', label:'Standort' },
   ];
   const coordFields = [
     { key:'breite', label:'Geographische Breite' },
@@ -759,8 +796,12 @@ function openMappingModal(manual){
   } else {
     bodyHtml = `
       ${basicFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Kundenname</strong> — entweder eine fertige Spalte, oder aus Vor- und Nachname zusammensetzen:</p>
+      ${kundeFields.map(buildRow).join('')}
       <p class="hint" style="margin:14px 0 8px"><strong>Adresse</strong> — entweder eine fertige Spalte wählen, oder aus mehreren Spalten zusammensetzen (z.B. Straße + Hausnummer + Ort):</p>
       ${addressFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Zähler</strong>:</p>
+      ${zaehlerFields.map(buildRow).join('')}
       <p class="hint" style="margin:14px 0 8px"><strong>Koordinaten</strong> — entweder zwei getrennte Spalten, oder eine kombinierte:</p>
       ${coordFields.map(buildRow).join('')}
     `;
@@ -781,7 +822,9 @@ function openMappingModal(manual){
 
 function confirmMapping(manual){
   const fields = ['kundencode','vorgang','telefonnummer','zaehlerplatzId',
+    'kundenname','vorname','nachname',
     'adresse','strasse','hausnummer','hausnummerzusatz','ortsteil','ort',
+    'zaehler','bauform','standort',
     'breite','laenge','koordinaten'];
   const mapping = {};
   for(const f of fields){
@@ -836,6 +879,15 @@ function buildCoords(raw, m){
   return null;
 }
 
+function buildKundenname(raw, m){
+  if(m.kundenname && toStr(raw[m.kundenname]).trim()){
+    return toStr(raw[m.kundenname]).trim();
+  }
+  const vorname = m.vorname ? toStr(raw[m.vorname]).trim() : '';
+  const nachname = m.nachname ? toStr(raw[m.nachname]).trim() : '';
+  return [vorname, nachname].filter(Boolean).join(' ');
+}
+
 function runImport(){
   if(!pendingCsvRows || !columnMapping){ return; }
   const m = columnMapping;
@@ -858,8 +910,12 @@ function runImport(){
     const adresse = buildAddress(raw, m);
     const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
     const koordinaten = buildCoords(raw, m);
+    const kundenname = buildKundenname(raw, m);
+    const zaehler = toStr(m.zaehler ? raw[m.zaehler] : '');
+    const bauform = toStr(m.bauform ? raw[m.bauform] : '');
+    const standort = toStr(m.standort ? raw[m.standort] : '');
 
-    const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, adresse, zaehlerplatzId, koordinaten });
+    const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
 
     auftraege.push({
       id: uid(),
@@ -869,6 +925,10 @@ function runImport(){
       adresse: adresse || adrEntry.adresse || '',
       zaehlerplatzId: zaehlerplatzId || adrEntry.zaehlerplatzId || '',
       koordinaten: koordinaten || adrEntry.koordinaten || null,
+      kundenname: kundenname || adrEntry.kundenname || '',
+      zaehler: zaehler || adrEntry.zaehler || '',
+      bauform: bauform || adrEntry.bauform || '',
+      standort: standort || adrEntry.standort || '',
       adrEntryId: adrEntry.id,
       status: 'offen',
       kommentar: '',
@@ -1235,20 +1295,85 @@ function doResetMapping(){
   showToast('Spaltenzuordnung zurückgesetzt');
 }
 
-function renderTabView(tabKey, list){
+let filters = {
+  offen:    { search:'', status:'', vorgang:'' },
+  erledigt: { search:'', status:'', vorgang:'' }
+};
+
+function applyFilters(list, tabKey){
+  const f = filters[tabKey];
+  if(!f.search && !f.status && !f.vorgang) return list;
+  const q = f.search.trim().toLowerCase();
+  return list.filter(a => {
+    if(f.status && a.status !== f.status) return false;
+    if(f.vorgang && a.vorgang !== f.vorgang) return false;
+    if(q){
+      const haystack = [a.kundencode, a.kundenname, a.vorgang, a.adresse, a.standort,
+        a.telefonnummer, a.zaehler, a.bauform, a.zaehlerplatzId, a.kommentar]
+        .map(v => (v||'').toString().toLowerCase()).join(' ');
+      if(!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderFilterBar(tabKey, fullList){
+  const f = filters[tabKey];
+  const vorgangOptions = Array.from(new Set(fullList.map(a => a.vorgang).filter(Boolean))).sort();
+  const anyActive = !!(f.search || f.status || f.vorgang);
+  return `
+    <div class="filter-bar">
+      <input type="text" id="filtersearch-${tabKey}" class="filter-search" placeholder="Suchen (Name, Adresse, Kundencode, Kommentar…)"
+        value="${escapeHtml(f.search)}" oninput="setFilter('${tabKey}','search', this.value)">
+      <select class="filter-select" onchange="setFilter('${tabKey}','status', this.value)">
+        <option value="">Alle Status</option>
+        ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${f.status===k?'selected':''}>${v.label}</option>`).join('')}
+      </select>
+      <select class="filter-select" onchange="setFilter('${tabKey}','vorgang', this.value)">
+        <option value="">Alle Vorgangstypen</option>
+        ${vorgangOptions.map(v => `<option value="${escapeHtml(v)}" ${f.vorgang===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
+      </select>
+      ${anyActive ? `<button class="btn small ghost" onclick="resetFilter('${tabKey}')">✕ Filter zurücksetzen</button>` : ''}
+    </div>`;
+}
+function setFilter(tabKey, key, value){
+  filters[tabKey][key] = value;
+  const searchEl = document.getElementById('filtersearch-' + tabKey);
+  const cursorPos = searchEl ? searchEl.selectionStart : null;
+
+  const fullList = auftraege.filter(a => tabKey === 'erledigt' ? a.status === 'erledigt' : a.status !== 'erledigt');
+  renderTabView(tabKey, fullList);
+
+  if(key === 'search'){
+    const newEl = document.getElementById('filtersearch-' + tabKey);
+    if(newEl){
+      newEl.focus();
+      if(cursorPos !== null) newEl.setSelectionRange(cursorPos, cursorPos);
+    }
+  }
+}
+function resetFilter(tabKey){
+  filters[tabKey] = { search:'', status:'', vorgang:'' };
+  render();
+}
+
+function renderTabView(tabKey, fullList){
   const container = document.getElementById('view-' + tabKey);
+  const list = applyFilters(fullList, tabKey);
   const toggleHtml = `
     <div class="view-toggle">
       <button class="btn small ${viewMode[tabKey]==='liste'?'active':''}" onclick="setViewMode('${tabKey}','liste')">📋 Liste</button>
       <button class="btn small ${viewMode[tabKey]==='karte'?'active':''}" onclick="setViewMode('${tabKey}','karte')">🗺️ Karte</button>
+      ${list.length !== fullList.length ? `<span class="count-pill" style="margin-left:6px">${list.length} von ${fullList.length}</span>` : ''}
     </div>`;
+  const filterHtml = renderFilterBar(tabKey, fullList);
 
   if(viewMode[tabKey] === 'karte'){
-    container.innerHTML = toggleHtml + `<div id="map-${tabKey}" style="height:540px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>`;
+    container.innerHTML = filterHtml + toggleHtml + `<div id="map-${tabKey}" style="height:540px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>`;
     initMapForTab(tabKey, list);
   } else {
     if(mapInstances[tabKey]){ mapInstances[tabKey].remove(); delete mapInstances[tabKey]; }
-    container.innerHTML = toggleHtml + renderAuftragTable(list, tabKey === 'erledigt');
+    container.innerHTML = filterHtml + toggleHtml + renderAuftragTable(list, tabKey === 'erledigt');
   }
 }
 
@@ -1256,6 +1381,7 @@ function setViewMode(tabKey, mode){
   viewMode[tabKey] = mode;
   render();
 }
+
 
 function initMapForTab(tabKey, list){
   const withCoords = list.filter(a => a.koordinaten);
@@ -1291,10 +1417,14 @@ function initMapForTab(tabKey, list){
     const marker = L.marker([a.koordinaten.lat, a.koordinaten.lon], { icon }).addTo(map);
     marker.bindPopup(`
       <div class="pop-code">${escapeHtml(a.kundencode)}</div>
+      ${a.kundenname ? `<div>${escapeHtml(a.kundenname)}</div>` : ''}
       <div>${escapeHtml(a.vorgang)}</div>
       <div class="pop-status" style="background:${color}22;color:${color}">${STATUS[a.status].label}</div>
       ${a.adresse ? `<div style="margin-top:6px">${escapeHtml(a.adresse)}</div>` : ''}
       ${a.telefonnummer ? `<div class="muted">${escapeHtml(a.telefonnummer)}</div>` : ''}
+      <div style="margin-top:8px">
+        <button class="btn small primary" onclick="openAuftragEditModal('${a.id}')" style="width:100%">✏️ Öffnen &amp; bearbeiten</button>
+      </div>
     `);
     bounds.push([a.koordinaten.lat, a.koordinaten.lon]);
   });
@@ -1311,24 +1441,26 @@ function renderAuftragTable(list, isErledigtTab){
   }
   const vc = settings.visibleColumns || DEFAULT_VISIBLE_COLUMNS;
   const show = k => vc[k] !== false;
+  const textCell = (a, key, label, placeholder) => show(key) ? `<td data-label="${label}">
+      <input class="cell-input" type="text" value="${escapeHtml(a[key])}"
+        onchange="updateAuftragField('${a.id}','${key}', this.value)" placeholder="${placeholder||'–'}">
+    </td>` : '';
 
   const rows = list.slice().sort((a,b) => (a.kundencode||'').localeCompare(b.kundencode||'')).map(a => `
     <tr>
       <td data-label="Kundencode"><span class="code">${escapeHtml(a.kundencode)}</span></td>
+      ${textCell(a, 'kundenname', 'Kundenname')}
       ${show('vorgang') ? `<td data-label="Vorgang">${escapeHtml(a.vorgang)}</td>` : ''}
       ${show('status') ? `<td data-label="Status">
         <select class="status-select ${STATUS[a.status].cls}" onchange="setStatus('${a.id}', this.value)">
           ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
         </select>
       </td>` : ''}
-      ${show('telefonnummer') ? `<td data-label="Telefon">
-        <input class="cell-input" type="text" value="${escapeHtml(a.telefonnummer)}"
-          onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–">
-      </td>` : ''}
-      ${show('adresse') ? `<td data-label="Adresse">
-        <input class="cell-input" type="text" value="${escapeHtml(a.adresse)}"
-          onchange="updateAuftragField('${a.id}','adresse', this.value)" placeholder="–">
-      </td>` : ''}
+      ${textCell(a, 'telefonnummer', 'Telefon')}
+      ${textCell(a, 'adresse', 'Adresse')}
+      ${textCell(a, 'standort', 'Standort')}
+      ${textCell(a, 'zaehler', 'Zähler')}
+      ${textCell(a, 'bauform', 'Bauform Zähler')}
       ${show('kommentar') ? `<td data-label="Kommentar">
         <textarea class="cell-input" rows="1" onchange="updateAuftragField('${a.id}','kommentar', this.value)" placeholder="Notiz…">${escapeHtml(a.kommentar)}</textarea>
       </td>` : ''}
@@ -1343,6 +1475,7 @@ function renderAuftragTable(list, isErledigtTab){
       </td>` : ''}
       <td data-label="Aktionen">
         <div class="row-actions">
+          <button class="icon-btn" onclick="openAuftragEditModal('${a.id}')" title="Bearbeiten">✏️</button>
           <button class="icon-btn" onclick="openTerminModal('${a.id}')" title="Termin festlegen">📅</button>
           <button class="icon-btn" onclick="openAuftragHistory('${a.id}')" title="Verlauf">🕒</button>
         </div>
@@ -1352,10 +1485,14 @@ function renderAuftragTable(list, isErledigtTab){
 
   const headCells = [
     '<th>Kundencode</th>',
+    show('kundenname') ? '<th>Kundenname</th>' : '',
     show('vorgang') ? '<th>Vorgang</th>' : '',
     show('status') ? '<th>Status</th>' : '',
     show('telefonnummer') ? '<th>Telefon</th>' : '',
     show('adresse') ? '<th>Adresse</th>' : '',
+    show('standort') ? '<th>Standort</th>' : '',
+    show('zaehler') ? '<th>Zähler</th>' : '',
+    show('bauform') ? '<th>Bauform Zähler</th>' : '',
     show('kommentar') ? '<th>Kommentar</th>' : '',
     show('termin') ? '<th>Termin</th>' : '',
     show('koordinaten') ? '<th>Koordinaten</th>' : '',
@@ -1375,15 +1512,18 @@ function renderAdressbuch(){
       <div>Einträge entstehen automatisch beim Import und bleiben dauerhaft erhalten.</div>
     </div>`;
   }
+  const adrTextCell = (e, key, label) => `<td data-label="${label}">
+      <input class="cell-input" type="text" value="${escapeHtml(e[key])}" onchange="updateAdrField('${e.id}','${key}', this.value)">
+    </td>`;
   const rows = adressbuch.slice().sort((a,b)=>(a.adresse||'').localeCompare(b.adresse||'')).map(e => `
     <tr>
-      <td data-label="Adresse">
-        <input class="cell-input" type="text" value="${escapeHtml(e.adresse)}" onchange="updateAdrField('${e.id}','adresse', this.value)">
-      </td>
+      ${adrTextCell(e, 'kundenname', 'Kundenname')}
+      ${adrTextCell(e, 'adresse', 'Adresse')}
       <td data-label="Zählerplatz-ID"><span class="code">${escapeHtml(e.zaehlerplatzId || '–')}</span></td>
-      <td data-label="Telefon">
-        <input class="cell-input" type="text" value="${escapeHtml(e.telefonnummer)}" onchange="updateAdrField('${e.id}','telefonnummer', this.value)">
-      </td>
+      ${adrTextCell(e, 'telefonnummer', 'Telefon')}
+      ${adrTextCell(e, 'standort', 'Standort')}
+      ${adrTextCell(e, 'zaehler', 'Zähler')}
+      ${adrTextCell(e, 'bauform', 'Bauform Zähler')}
       <td data-label="Koordinaten">
         <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630"
           onchange="updateAdrCoordsField('${e.id}', this.value)" style="font-family:var(--font-mono);font-size:12px">
@@ -1395,7 +1535,7 @@ function renderAdressbuch(){
     </tr>
   `).join('');
   return `<div class="grid-wrap"><table>
-    <thead><tr><th>Adresse</th><th>Zählerplatz-ID</th><th>Telefon</th><th>Koordinaten</th><th>Kundencode</th><th>Verlauf</th></tr></thead>
+    <thead><tr><th>Kundenname</th><th>Adresse</th><th>Zählerplatz-ID</th><th>Telefon</th><th>Standort</th><th>Zähler</th><th>Bauform Zähler</th><th>Koordinaten</th><th>Kundencode</th><th>Verlauf</th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
 }
@@ -1410,7 +1550,7 @@ function updateAdrCoordsField(entryId, value){
 /* ---------------------------------------------------------------
    Field updates
 --------------------------------------------------------------- */
-function updateAuftragField(id, field, value){
+function updateAuftragField(id, field, value, silent){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
   const oldVal = a[field] || '';
@@ -1419,14 +1559,15 @@ function updateAuftragField(id, field, value){
   a[field] = value;
   saveAuftraege();
 
-  // propagate phone/address edits into address book
-  if((field === 'telefonnummer' || field === 'adresse') && a.adrEntryId){
+  // propagate persistent customer/meter fields into address book
+  const propagatedFields = ['telefonnummer','adresse','kundenname','zaehler','bauform','standort'];
+  if(propagatedFields.includes(field) && a.adrEntryId){
     updateAdrField(a.adrEntryId, field, value);
   }
-  showToast('Gespeichert');
+  if(!silent) showToast('Gespeichert');
 }
 
-function setStatus(id, newStatus){
+function setStatus(id, newStatus, silent){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
   const old = a.status;
@@ -1434,8 +1575,72 @@ function setStatus(id, newStatus){
   a.history.push({ ts: nowIso(), field:'status', old: STATUS[old].label, new: STATUS[newStatus].label });
   a.status = newStatus;
   saveAuftraege();
+  if(!silent){
+    render();
+    showToast(newStatus === 'erledigt' ? 'Als erledigt markiert' : 'Status aktualisiert');
+  }
+}
+
+/* ---------------------------------------------------------------
+   History modals
+--------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   Auftrag edit modal (from table ✏️ or map popup)
+--------------------------------------------------------------- */
+function openAuftragEditModal(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  const field = (key, label, value, placeholder) => `
+    <div class="field">
+      <label>${label}</label>
+      <input type="text" id="edit_${key}" value="${escapeHtml(value||'')}" placeholder="${placeholder||''}">
+    </div>`;
+
+  showModal(`
+    <div class="modal-head"><h3>${escapeHtml(a.kundencode)} · ${escapeHtml(a.vorgang)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Status</label>
+        <select id="edit_status">
+          ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
+        </select>
+      </div>
+      ${field('kundenname','Kundenname', a.kundenname)}
+      ${field('telefonnummer','Telefon', a.telefonnummer)}
+      ${field('adresse','Adresse', a.adresse)}
+      ${field('standort','Standort', a.standort)}
+      ${field('zaehler','Zähler', a.zaehler)}
+      ${field('bauform','Bauform Zähler', a.bauform)}
+      <div class="field">
+        <label>Kommentar</label>
+        <textarea id="edit_kommentar" rows="3">${escapeHtml(a.kommentar||'')}</textarea>
+      </div>
+      ${a.termin ? `<p class="hint">Termin: <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
+      <div class="settings-row" style="margin-top:6px">
+        <button class="btn small" onclick="openTerminModal('${a.id}')">📅 Termin</button>
+        <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Schließen</button>
+      <button class="btn primary" onclick="saveAuftragEditModal('${a.id}')">Speichern</button>
+    </div>
+  `);
+}
+
+function saveAuftragEditModal(id){
+  const keys = ['kundenname','telefonnummer','adresse','standort','zaehler','bauform'];
+  keys.forEach(k => {
+    const el = document.getElementById('edit_'+k);
+    if(el) updateAuftragField(id, k, el.value, true);
+  });
+  const kommentarEl = document.getElementById('edit_kommentar');
+  if(kommentarEl) updateAuftragField(id, 'kommentar', kommentarEl.value, true);
+  const statusEl = document.getElementById('edit_status');
+  if(statusEl) setStatus(id, statusEl.value, true);
+  closeModal();
   render();
-  showToast(newStatus === 'erledigt' ? 'Als erledigt markiert' : 'Status aktualisiert');
+  showToast('Gespeichert');
 }
 
 /* ---------------------------------------------------------------
