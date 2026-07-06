@@ -1642,6 +1642,32 @@ function simpleTextCell(a, key, label, placeholder){
         onchange="updateAuftragField('${a.id}','${key}', this.value)" placeholder="${placeholder||'–'}">
     </td>`;
 }
+function phoneSearchUrl(name, adresse){
+  const q = [name, adresse, 'Telefonnummer'].filter(Boolean).join(' ');
+  return 'https://www.google.com/search?q=' + encodeURIComponent(q);
+}
+function searchPhoneForAuftrag(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  window.open(phoneSearchUrl(a.kundenname || a.kundencode, a.adresse), '_blank');
+}
+function searchPhoneForAdr(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  window.open(phoneSearchUrl(e.kundenname || e.kundencode, e.adresse), '_blank');
+}
+function telefonCellWithSearch(a, idPrefix){
+  const btn = !a.telefonnummer
+    ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`
+    : '';
+  return `<td data-label="${COLUMN_LABELS.telefonnummer}">
+      <div style="display:flex;gap:4px;align-items:center">
+        <input class="cell-input" type="text" value="${escapeHtml(a.telefonnummer)}"
+          onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1">
+        ${btn}
+      </div>
+    </td>`;
+}
 const CELL_RENDERERS = {
   kundenname: (a) => simpleTextCell(a, 'kundenname', COLUMN_LABELS.kundenname),
   vorgang: (a) => `<td data-label="${COLUMN_LABELS.vorgang}">${escapeHtml(a.vorgang)}</td>`,
@@ -1650,7 +1676,7 @@ const CELL_RENDERERS = {
         ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
       </select>
     </td>`,
-  telefonnummer: (a) => simpleTextCell(a, 'telefonnummer', COLUMN_LABELS.telefonnummer),
+  telefonnummer: (a) => telefonCellWithSearch(a),
   email: (a) => simpleTextCell(a, 'email', COLUMN_LABELS.email, 'name@beispiel.de'),
   adresse: (a) => simpleTextCell(a, 'adresse', COLUMN_LABELS.adresse),
   standort: (a) => simpleTextCell(a, 'standort', COLUMN_LABELS.standort),
@@ -1765,6 +1791,7 @@ function renderAdressbuch(){
           onchange="updateAdrField('${e.id}','telefonnummer', this.value)">
       </div>
       <div class="adr-card-actions">
+        ${!e.telefonnummer ? `<button class="icon-btn" onclick="searchPhoneForAdr('${e.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>` : ''}
         <button class="icon-btn" onclick="toggleAdrDetails('${e.id}')" title="Details">${detailsOpen ? '▲' : '▼'}</button>
         <button class="icon-btn" onclick="openAdrHistory('${e.id}')" title="Verlauf">🕒 ${e.history.length}</button>
       </div>
@@ -1851,7 +1878,13 @@ function openAuftragEditModal(id){
         </select>
       </div>
       ${field('kundenname','Kundenname', a.kundenname)}
-      ${field('telefonnummer','Telefon', a.telefonnummer)}
+      <div class="field">
+        <label>Telefon</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="edit_telefonnummer" value="${escapeHtml(a.telefonnummer||'')}" style="flex:1">
+          ${!a.telefonnummer ? `<button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button>` : ''}
+        </div>
+      </div>
       ${field('email','E-Mail', a.email, 'name@beispiel.de')}
       ${field('adresse','Adresse', a.adresse)}
       ${field('standort','Standort', a.standort)}
