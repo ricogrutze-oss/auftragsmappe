@@ -2308,7 +2308,6 @@ function generateIcs(){
   const seq = (a.termin && typeof a.termin.sequence === 'number') ? a.termin.sequence + 1 : 0;
 
   const descLines = [];
-  descLines.push('Kundencode: ' + a.kundencode);
   if(a.kundenname) descLines.push('Kunde: ' + a.kundenname);
   if(a.telefonnummer) descLines.push('Telefon: ' + a.telefonnummer);
   if(a.zaehler) descLines.push('Zähler: ' + a.zaehler);
