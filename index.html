@@ -2425,12 +2425,12 @@ function phoneButtonsHtml(number){
 }
 function telefonCellWithSearch(a){
   const btn = !a.telefonnummer
-    ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>
-       <button class="icon-btn" onclick="openQuickPhoneEntry('${a.id}')" title="Nummer eintragen">✏️</button>`
+    ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`
     : phoneButtonsHtml(a.telefonnummer);
   return `<td data-label="${COLUMN_LABELS.telefonnummer}">
       <div style="display:flex;gap:6px;align-items:center">
-        <span class="ro-value">${escapeHtml(a.telefonnummer) || '<span class=\'muted\'>–</span>'}</span>
+        <input class="cell-input" type="text" value="${escapeHtml(a.telefonnummer)}"
+          onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1;min-width:90px">
         ${btn}
       </div>
     </td>`;
@@ -2464,7 +2464,10 @@ const CELL_RENDERERS = {
       <input class="cell-input" type="date" value="${escapeHtml(a.inbetriebnahmeDatum||'')}"
         onchange="updateAuftragField('${a.id}','inbetriebnahmeDatum', this.value)">
     </td>`,
-  koordinaten: (a) => `<td data-label="${COLUMN_LABELS.koordinaten}"><span class="ro-value" style="font-family:var(--font-mono);font-size:12px">${escapeHtml(fmtCoords(a.koordinaten)) || '<span class=\'muted\'>–</span>'}</span></td>`,
+  koordinaten: (a) => `<td data-label="${COLUMN_LABELS.koordinaten}">
+      <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(a.koordinaten))}"
+        onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px">
+    </td>`,
 };
 
 function getCellRenderer(key){
@@ -2771,19 +2774,23 @@ function openAuftragEditModal(id){
         ${infoRow('Standort', a.standort)}
         ${infoRow('Zähler', a.zaehler)}
         ${infoRow('Bauform', a.bauform)}
-        ${infoRow('Koordinaten', fmtCoords(a.koordinaten))}
         ${infoRow('E-Mail', a.email)}
       </div>
-      <div class="ro-info-item" style="margin-bottom:12px">
-        <span class="ro-info-label">Telefon</span>
-        <span class="ro-info-val" style="display:flex;align-items:center;gap:8px">
-          ${a.telefonnummer
-            ? `${escapeHtml(a.telefonnummer)} ${phoneButtonsHtml(a.telefonnummer)}`
-            : `<span class="muted">–</span> <button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button> <button class="btn small" onclick="openQuickPhoneEntry('${a.id}')">✏️ Eintragen</button>`}
-        </span>
+      <div class="field">
+        <label>Koordinaten</label>
+        <input type="text" id="edit_koordinaten_display" value="${escapeHtml(fmtCoords(a.koordinaten))}"
+          onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:13px">
+      </div>
+      <div class="field">
+        <label>Telefon</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="edit_telefonnummer_display" value="${escapeHtml(a.telefonnummer)}"
+            onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1">
+          ${a.telefonnummer ? phoneButtonsHtml(a.telefonnummer) : `<button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button>`}
+        </div>
       </div>
       ${a.auftragsbeschreibung ? `<div class="field"><label>Auftragsbeschreibung</label><p class="ro-value" style="white-space:pre-line">${escapeHtml(a.auftragsbeschreibung)}</p></div>` : ''}
-      <p class="hint">Diese Stammdaten kannst du im Adressbuch korrigieren, falls sie fehlerhaft sind. Hier bearbeitbar sind Status, Notiz, Inbetriebnahme-Datum und Termin.</p>
+      <p class="hint">Diese Stammdaten kannst du im Adressbuch korrigieren, falls sie fehlerhaft sind. Ausnahmen: Koordinaten und Telefon kannst du auch hier direkt bearbeiten. Bearbeitbar sind außerdem Status, Notiz, Inbetriebnahme-Datum und Termin.</p>
 
       <div class="field-row">
         <div class="field">
