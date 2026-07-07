@@ -1167,7 +1167,7 @@ function isOhneTerminStandort(standort){
 function runImport(){
   if(!pendingCsvRows || !columnMapping){ return; }
   const m = columnMapping;
-  let added = 0, updatedExisting = 0, skippedDup = 0, skippedEmpty = 0;
+  let added = 0, updatedExisting = 0, skippedDup = 0, skippedEmpty = 0, adrOnly = 0;
 
   // map of existing OPEN (not erledigt) auftraege by key, so duplicates can be backfilled
   const existingByKey = new Map();
@@ -1178,19 +1178,33 @@ function runImport(){
   for(const raw of pendingCsvRows){
     const kundencode = toStr(m.kundencode ? raw[m.kundencode] : '');
     const vorgang = toStr(m.vorgang ? raw[m.vorgang] : '');
-    if(!kundencode.trim() || !vorgang.trim()){ skippedEmpty++; continue; }
-    const key = norm(kundencode) + '|' + norm(vorgang);
+    const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
+
+    // Need at least one identifier to create any record at all
+    if(!kundencode.trim() && !zaehlerplatzId.trim()){ skippedEmpty++; continue; }
 
     const telefonnummer = toStr(m.telefonnummer ? raw[m.telefonnummer] : '');
     const email = toStr(m.email ? raw[m.email] : '');
     const auftragsbeschreibung = toStr(m.auftragsbeschreibung ? raw[m.auftragsbeschreibung] : '');
     const adresse = buildAddress(raw, m);
-    const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
     const koordinaten = buildCoords(raw, m);
     const kundenname = buildKundenname(raw, m);
     const zaehler = toStr(m.zaehler ? raw[m.zaehler] : '');
     const bauform = toStr(m.bauform ? raw[m.bauform] : '');
     const standort = toStr(m.standort ? raw[m.standort] : '');
+
+    // Always keep the address book current — regardless of whether this
+    // row has a Vorgang (Auftragstyp). This is the master data (Anschrift,
+    // Zählerplatz-ID, Standort etc.) and should cover every metering point,
+    // not just ones with a currently open order.
+    const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, email, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
+
+    if(!vorgang.trim()){
+      adrOnly++;
+      continue; // no Auftragstyp on this row → address book updated, but no Auftrag created
+    }
+
+    const key = norm(kundencode) + '|' + norm(vorgang);
 
     if(existingByKey.has(key)){
       // Duplicate: don't touch fields already filled (manual edits win),
@@ -1213,7 +1227,6 @@ function runImport(){
       continue;
     }
 
-    const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, email, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
     const effectiveStandort = standort || adrEntry.standort || '';
 
     const newAuftrag = {
@@ -1244,12 +1257,13 @@ function runImport(){
 
   saveAuftraege();
   saveAdressbuch();
-  settings.lastImport = { ts: nowIso(), added, updatedExisting, skippedDup, skippedEmpty };
+  settings.lastImport = { ts: nowIso(), added, updatedExisting, skippedDup, skippedEmpty, adrOnly };
   saveSettings();
   pendingCsvRows = null;
   render();
   const bits = [`${added} neu`];
   if(updatedExisting) bits.push(`${updatedExisting} bestehende ergänzt`);
+  if(adrOnly) bits.push(`${adrOnly} nur ins Adressbuch (kein Vorgang)`);
   bits.push(`${skippedDup - updatedExisting} unverändert übersprungen`);
   showToast(`Import fertig: ${bits.join(', ')}`);
 }
@@ -1737,7 +1751,7 @@ function backupStalenessWarningHtml(){
 function renderEinstellungen(){
   const lp = settings.lastImport;
   const lastImportText = lp
-    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu${lp.updatedExisting ? ' · ' + lp.updatedExisting + ' bestehende ergänzt' : ''} · ${lp.skippedDup} Duplikate übersprungen`
+    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu${lp.updatedExisting ? ' · ' + lp.updatedExisting + ' bestehende ergänzt' : ''}${lp.adrOnly ? ' · ' + lp.adrOnly + ' nur ins Adressbuch' : ''} · ${lp.skippedDup} Duplikate übersprungen`
     : 'Noch kein Import';
 
   const syncBits = [];
@@ -2080,12 +2094,16 @@ function initMapForTab(tabKey, list){
   const colorFor = (a) => byVorgang ? colorForVorgang(a.vorgang) : (statusColor[a.status] || '#55635f');
 
   const bounds = [];
+  const sel = selection[tabKey];
   withCoords.forEach(a => {
     const color = colorFor(a);
+    const isSelected = sel.has(a.id);
     const icon = L.divIcon({
       className: '',
-      html: `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px ${color}"></div>`,
-      iconSize: [16,16], iconAnchor: [8,8]
+      html: isSelected
+        ? `<div style="width:20px;height:20px;border-radius:50%;background:${color};border:3px solid var(--teal);box-shadow:0 0 0 2px #fff, 0 0 6px rgba(31,92,86,.6);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:bold">✓</div>`
+        : `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px ${color}"></div>`,
+      iconSize: isSelected ? [20,20] : [16,16], iconAnchor: isSelected ? [10,10] : [8,8]
     });
     const marker = L.marker([a.koordinaten.lat, a.koordinaten.lon], { icon }).addTo(map);
     marker.bindPopup(`
@@ -2096,6 +2114,9 @@ function initMapForTab(tabKey, list){
       ${a.adresse ? `<div style="margin-top:6px">${escapeHtml(a.adresse)}</div>` : ''}
       ${a.standort ? `<div class="muted">${escapeHtml(a.standort)}</div>` : ''}
       ${a.telefonnummer ? `<div class="muted">${escapeHtml(a.telefonnummer)}</div>` : ''}
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px">
+        <input type="checkbox" ${isSelected?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"> Für Route auswählen
+      </label>
       <div style="margin-top:8px;display:flex;gap:6px">
         <button class="btn small" onclick="navigateToAuftrag('${a.id}')" style="flex:1">🧭 Navigation</button>
         <button class="btn small primary" onclick="openAuftragEditModal('${a.id}')" style="flex:1">✏️ Bearbeiten</button>
@@ -2347,6 +2368,40 @@ function searchPhoneForAuftrag(id){
   if(!a) return;
   window.open(phoneSearchUrl(a.kundenname || a.kundencode, a.adresse), '_blank');
 }
+function openQuickPhoneEntry(auftragId){
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  showModal(`
+    <div class="modal-head"><h3>Telefonnummer eintragen</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>${escapeHtml(a.kundenname || a.kundencode)}</label>
+        <input type="text" id="quickPhoneInput" placeholder="z.B. 0391 12345678" autofocus>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="saveQuickPhoneEntry('${auftragId}')">Speichern</button>
+    </div>
+  `);
+}
+function saveQuickPhoneEntry(auftragId){
+  const el = document.getElementById('quickPhoneInput');
+  const value = el ? el.value.trim() : '';
+  if(!value){ showToast('Bitte eine Nummer eingeben'); return; }
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  if(a.adrEntryId){
+    updateAdrField(a.adrEntryId, 'telefonnummer', value); // propagates to the Auftrag automatically
+  } else {
+    a.history.push({ ts: nowIso(), field:'telefonnummer', old:'', new: value });
+    a.telefonnummer = value;
+    saveAuftraege();
+  }
+  closeModal();
+  render();
+  showToast('Telefonnummer gespeichert');
+}
 function searchPhoneForAdr(id){
   const e = adressbuch.find(x => x.id === id);
   if(!e) return;
@@ -2370,7 +2425,8 @@ function phoneButtonsHtml(number){
 }
 function telefonCellWithSearch(a){
   const btn = !a.telefonnummer
-    ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`
+    ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>
+       <button class="icon-btn" onclick="openQuickPhoneEntry('${a.id}')" title="Nummer eintragen">✏️</button>`
     : phoneButtonsHtml(a.telefonnummer);
   return `<td data-label="${COLUMN_LABELS.telefonnummer}">
       <div style="display:flex;gap:6px;align-items:center">
@@ -2723,7 +2779,7 @@ function openAuftragEditModal(id){
         <span class="ro-info-val" style="display:flex;align-items:center;gap:8px">
           ${a.telefonnummer
             ? `${escapeHtml(a.telefonnummer)} ${phoneButtonsHtml(a.telefonnummer)}`
-            : `<span class="muted">–</span> <button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button>`}
+            : `<span class="muted">–</span> <button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button> <button class="btn small" onclick="openQuickPhoneEntry('${a.id}')">✏️ Eintragen</button>`}
         </span>
       </div>
       ${a.auftragsbeschreibung ? `<div class="field"><label>Auftragsbeschreibung</label><p class="ro-value" style="white-space:pre-line">${escapeHtml(a.auftragsbeschreibung)}</p></div>` : ''}
