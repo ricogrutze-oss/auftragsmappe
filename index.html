@@ -255,6 +255,7 @@
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M0 0l5 6 5-6z' fill='%23555'/></svg>");
   }
   .st-offen{ background:var(--gray-bg); color:#3d4744; }
+  .st-ohne_termin{ background:var(--blue-bg); color:#4a6b8a; }
   .st-in_bearbeitung{ background:var(--amber-bg); color:var(--amber); }
   .st-termin_vereinbart{ background:var(--blue-bg); color:var(--blue); }
   .st-kunde_rueckmeldung{ background:var(--purple-bg); color:var(--purple); }
@@ -481,6 +482,7 @@
 --------------------------------------------------------------- */
 const STATUS = {
   offen:              { label: 'Offen', cls: 'st-offen' },
+  ohne_termin:        { label: 'Ohne Termin (Station/Zähleranschlusssäule)', cls: 'st-ohne_termin' },
   in_bearbeitung:     { label: 'In Bearbeitung', cls: 'st-in_bearbeitung' },
   termin_vereinbart:  { label: 'Termin vereinbart', cls: 'st-termin_vereinbart' },
   kunde_rueckmeldung: { label: 'Kunde meldet sich zurück', cls: 'st-kunde_rueckmeldung' },
@@ -1027,6 +1029,13 @@ function buildKundenname(raw, m){
   return [vorname, nachname].filter(Boolean).join(' ');
 }
 
+function isOhneTerminStandort(standort){
+  if(!standort) return false;
+  const s = standort.toString().toLowerCase()
+    .replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue').replace(/ß/g,'ss');
+  return s.includes('station') || s.includes('zaehleranschlusssaeule');
+}
+
 function runImport(){
   if(!pendingCsvRows || !columnMapping){ return; }
   const m = columnMapping;
@@ -1077,6 +1086,7 @@ function runImport(){
     }
 
     const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, email, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
+    const effectiveStandort = standort || adrEntry.standort || '';
 
     const newAuftrag = {
       id: uid(),
@@ -1091,9 +1101,9 @@ function runImport(){
       kundenname: kundenname || adrEntry.kundenname || '',
       zaehler: zaehler || adrEntry.zaehler || '',
       bauform: bauform || adrEntry.bauform || '',
-      standort: standort || adrEntry.standort || '',
+      standort: effectiveStandort,
       adrEntryId: adrEntry.id,
-      status: 'offen',
+      status: isOhneTerminStandort(effectiveStandort) ? 'ohne_termin' : 'offen',
       kommentar: '',
       termin: null,
       importedAt: nowIso(),
@@ -1803,7 +1813,7 @@ function initMapForTab(tabKey, list){
   }).addTo(map);
 
   const statusColor = {
-    offen:'#55635f', in_bearbeitung:'#b5790a', termin_vereinbart:'#2b5a8c',
+    offen:'#55635f', ohne_termin:'#4a6b8a', in_bearbeitung:'#b5790a', termin_vereinbart:'#2b5a8c',
     kunde_rueckmeldung:'#6a4c8c', anlage_nicht_fertig:'#a3392f',
     warte_planung:'#b5540a', inbetriebnahme_erfolgt:'#106b78', erledigt:'#2c7a4b'
   };
@@ -1825,9 +1835,11 @@ function initMapForTab(tabKey, list){
       <div>${escapeHtml(a.vorgang)}</div>
       <div class="pop-status" style="background:${color}22;color:${color}">${byVorgang ? escapeHtml(a.vorgang) : STATUS[a.status].label}</div>
       ${a.adresse ? `<div style="margin-top:6px">${escapeHtml(a.adresse)}</div>` : ''}
+      ${a.standort ? `<div class="muted">${escapeHtml(a.standort)}</div>` : ''}
       ${a.telefonnummer ? `<div class="muted">${escapeHtml(a.telefonnummer)}</div>` : ''}
-      <div style="margin-top:8px">
-        <button class="btn small primary" onclick="openAuftragEditModal('${a.id}')" style="width:100%">✏️ Öffnen &amp; bearbeiten</button>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="btn small" onclick="navigateToAuftrag('${a.id}')" style="flex:1">🧭 Navigation</button>
+        <button class="btn small primary" onclick="openAuftragEditModal('${a.id}')" style="flex:1">✏️ Bearbeiten</button>
       </div>
     `);
     bounds.push([a.koordinaten.lat, a.koordinaten.lon]);
@@ -1863,6 +1875,20 @@ function simpleTextCell(a, key, label, placeholder){
 function phoneSearchUrl(name, adresse){
   const q = [name, adresse, 'Telefonnummer'].filter(Boolean).join(' ');
   return 'https://www.google.com/search?q=' + encodeURIComponent(q);
+}
+function navigateToAuftrag(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  let url;
+  if(a.koordinaten){
+    url = `https://www.google.com/maps/dir/?api=1&destination=${a.koordinaten.lat},${a.koordinaten.lon}`;
+  } else if(a.adresse){
+    url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(a.adresse)}`;
+  } else {
+    showToast('Keine Adresse oder Koordinaten hinterlegt');
+    return;
+  }
+  window.open(url, '_blank');
 }
 function searchPhoneForAuftrag(id){
   const a = auftraege.find(x => x.id === id);
@@ -1958,6 +1984,7 @@ function renderAuftragTable(list, isErledigtTab){
       <td data-label="Aktionen">
         <div class="row-actions">
           <button class="icon-btn" onclick="openAuftragEditModal('${a.id}')" title="Bearbeiten">✏️</button>
+          <button class="icon-btn" onclick="navigateToAuftrag('${a.id}')" title="Navigation">🧭</button>
           <button class="icon-btn" onclick="openTerminModal('${a.id}')" title="Termin festlegen">📅</button>
           <button class="icon-btn" onclick="openAuftragHistory('${a.id}')" title="Verlauf">🕒</button>
         </div>
@@ -2161,6 +2188,7 @@ function openAuftragEditModal(id){
       ${renderCustomFieldInputs(a)}
       ${a.termin ? `<p class="hint">Termin: <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
       <div class="settings-row" style="margin-top:6px">
+        <button class="btn small" onclick="navigateToAuftrag('${a.id}')">🧭 Navigation</button>
         <button class="btn small" onclick="openTerminModal('${a.id}')">📅 Termin</button>
         <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
         <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Im Adressbuch öffnen</button>
