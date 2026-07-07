@@ -493,7 +493,7 @@
   <div class="tab" data-tab="termine" onclick="switchTab('termine')" title="Termine">📅 <span class="n" id="tabCountTermine">0</span><span class="n" id="tabCountCallback" style="display:none;background:var(--red);color:#fff"></span></div>
   <div class="tab" data-tab="adressbuch" onclick="switchTab('adressbuch')" title="Adressbuch">📇 <span class="n" id="tabCountAdr">0</span></div>
   <div class="tab" data-tab="statistik" onclick="switchTab('statistik')" title="Statistik">📊</div>
-  <div class="tab" data-tab="einstellungen" onclick="switchTab('einstellungen')" title="Einstellungen">⚙️</div>
+  <div class="tab" data-tab="einstellungen" onclick="switchTab('einstellungen')" title="Einstellungen">⚙️<span class="n" id="tabWarnBackup" style="display:none;background:var(--red);color:#fff">!</span></div>
 </div>
 
 <main>
@@ -699,6 +699,15 @@ async function deletePhoto(auftragId){
 
 async function loadAll(){
   try{ const v = await kvGet('auftraege'); auftraege = v ? JSON.parse(v) : []; }catch(e){ auftraege = []; }
+  // migrate old string-only Wiedervorlage format ("2026-07-10") to {datum, zeit}
+  let migratedWiedervorlage = false;
+  auftraege.forEach(a => {
+    if(a.wiedervorlage && typeof a.wiedervorlage === 'string'){
+      a.wiedervorlage = { datum: a.wiedervorlage, zeit: '09:00' };
+      migratedWiedervorlage = true;
+    }
+  });
+  if(migratedWiedervorlage) saveAuftraege();
   try{ const v = await kvGet('adressbuch'); adressbuch = v ? JSON.parse(v) : []; }catch(e){ adressbuch = []; }
   try{ const v = await kvGet('settings'); settings = v ? JSON.parse(v) : { organizerEmail:'', lastImport:null }; }
   catch(e){ settings = { organizerEmail:'', lastImport:null }; }
@@ -1550,6 +1559,13 @@ function render(){
     callbackBadge.textContent = '📞' + dueCallbackCount;
   }
   document.getElementById('tabCountAdr').textContent = adressbuch.length;
+  const backupWarnBadge = document.getElementById('tabWarnBackup');
+  if(backupWarnBadge){
+    const isFolderLinked = folderHandle && !folderNeedsPermission;
+    const days = daysSinceLastBackup();
+    const stale = !isFolderLinked && (days === null || days >= 14);
+    backupWarnBadge.style.display = stale ? '' : 'none';
+  }
 
   renderTabView('offen', offen);
   renderTabView('erledigt', erledigt);
@@ -1697,6 +1713,27 @@ function renderTermine(list, allAuftraege){
   return `<div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
 }
 
+function daysSinceLastBackup(){
+  const dates = [];
+  if(settings.lastExport) dates.push(new Date(settings.lastExport));
+  if(settings.folderLastSync) dates.push(new Date(settings.folderLastSync));
+  if(dates.length === 0) return null;
+  const mostRecent = new Date(Math.max(...dates.map(d => d.getTime())));
+  return Math.floor((Date.now() - mostRecent.getTime()) / (1000*60*60*24));
+}
+function backupStalenessWarningHtml(){
+  // Only nudge if there's no auto-synced folder linked — that case is already handled automatically.
+  if(folderHandle && !folderNeedsPermission) return '';
+  const days = daysSinceLastBackup();
+  if(days === null){
+    return `<p class="hint" style="color:var(--red)">⚠️ Noch nie gesichert. Bei einer über Jahre wachsenden Liste lohnt sich eine regelmäßige Sicherung außerhalb des Geräts.</p>`;
+  }
+  if(days >= 14){
+    return `<p class="hint" style="color:var(--red)">⚠️ Letzte Sicherung ist ${days} Tage her. Zeit für eine neue Sicherung nach SharePoint/OneDrive.</p>`;
+  }
+  return '';
+}
+
 function renderEinstellungen(){
   const lp = settings.lastImport;
   const lastImportText = lp
@@ -1783,6 +1820,7 @@ function renderEinstellungen(){
         <button class="btn" onclick="document.getElementById('backupInput').click()">📥 Sicherung importieren</button>
       </div>
       <p class="hint">${escapeHtml(syncText)}</p>
+      ${backupStalenessWarningHtml()}
     </div>
 
     <div class="settings-section" style="border-color:var(--red-bg)">
@@ -2317,10 +2355,23 @@ function searchPhoneForAdr(id){
 function telHref(number){
   return 'tel:' + (number||'').toString().replace(/[^0-9+]/g,'');
 }
+async function copyPhoneNumber(number){
+  try{
+    await navigator.clipboard.writeText(number);
+    showToast('Nummer kopiert: ' + number);
+  }catch(e){
+    showToast('Kopieren nicht möglich (Berechtigung?)');
+  }
+}
+function phoneButtonsHtml(number){
+  const safeJs = (number||'').toString().replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return `<a class="icon-btn" href="${telHref(number)}" title="Anrufen" style="text-decoration:none">📞</a>
+    <button class="icon-btn" onclick="copyPhoneNumber('${safeJs}')" title="Nummer kopieren">📋</button>`;
+}
 function telefonCellWithSearch(a){
   const btn = !a.telefonnummer
     ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`
-    : `<a class="icon-btn" href="${telHref(a.telefonnummer)}" title="Anrufen" style="text-decoration:none">📞</a>`;
+    : phoneButtonsHtml(a.telefonnummer);
   return `<td data-label="${COLUMN_LABELS.telefonnummer}">
       <div style="display:flex;gap:6px;align-items:center">
         <span class="ro-value">${escapeHtml(a.telefonnummer) || '<span class=\'muted\'>–</span>'}</span>
@@ -2559,7 +2610,7 @@ function renderAdressbuch(){
       </div>
       <div class="adr-card-actions">
         ${e.telefonnummer
-          ? `<a class="icon-btn" href="${telHref(e.telefonnummer)}" title="Anrufen" style="text-decoration:none">📞</a>`
+          ? phoneButtonsHtml(e.telefonnummer)
           : `<button class="icon-btn" onclick="searchPhoneForAdr('${e.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`}
         <button class="icon-btn" onclick="toggleAdrDetails('${e.id}')" title="Details">${detailsOpen ? '▲' : '▼'}</button>
         <button class="icon-btn" onclick="openAdrHistory('${e.id}')" title="Verlauf">🕒 ${e.history.length}</button>
@@ -2671,7 +2722,7 @@ function openAuftragEditModal(id){
         <span class="ro-info-label">Telefon</span>
         <span class="ro-info-val" style="display:flex;align-items:center;gap:8px">
           ${a.telefonnummer
-            ? `${escapeHtml(a.telefonnummer)} <a class="icon-btn" href="${telHref(a.telefonnummer)}" title="Anrufen" style="text-decoration:none">📞</a>`
+            ? `${escapeHtml(a.telefonnummer)} ${phoneButtonsHtml(a.telefonnummer)}`
             : `<span class="muted">–</span> <button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button>`}
         </span>
       </div>
