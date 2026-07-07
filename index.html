@@ -18,6 +18,13 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <style>
   :root{
     --bg: #eef1f0;
@@ -150,16 +157,16 @@
     border-bottom:1px solid var(--line);
   }
   .tab{
-    padding:12px 18px 11px;
+    padding:12px 12px 11px;
     font-family:var(--font-display);
     font-weight:600;
-    font-size:13.5px;
+    font-size:19px;
     color:var(--ink-soft);
     cursor:pointer;
     border-bottom:3px solid transparent;
     display:flex;
     align-items:center;
-    gap:7px;
+    gap:4px;
   }
   .tab .n{
     font-family:var(--font-mono);
@@ -224,6 +231,14 @@
     display:flex; align-items:center; justify-content:space-between;
     padding:6px 10px; background:#f6f8f7; border-radius:6px; font-size:13px;
   }
+  .material-list{ display:flex; flex-direction:column; gap:4px; }
+  .material-row{
+    display:flex; align-items:center; gap:10px; padding:6px 10px;
+    background:#f6f8f7; border-radius:6px; font-size:12.5px;
+  }
+  .material-name{ flex:1; font-weight:600; }
+  .material-menge{ color:var(--ink-soft); min-width:40px; }
+  .material-datum{ font-family:var(--font-mono); font-size:11px; color:var(--ink-soft); }
   .muted{ color:var(--ink-soft); }
   .cell-input{
     width:100%;
@@ -370,6 +385,28 @@
   .agenda-main{ flex:1; min-width:0; }
   .agenda-title{ font-size:13.5px; font-weight:600; }
   .agenda-sub{ font-size:12.5px; color:var(--ink-soft); margin-top:2px; }
+  .stat-summary{ display:flex; flex-wrap:wrap; gap:12px; }
+  .stat-tile{
+    flex:1 1 110px; background:#f6f8f7; border-radius:8px; padding:14px 12px; text-align:center;
+  }
+  .stat-tile-num{ font-family:var(--font-display); font-size:24px; font-weight:700; color:var(--teal-deep); }
+  .stat-tile-label{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .stat-row{ display:flex; align-items:center; gap:10px; padding:7px 0; }
+  .stat-label{ font-size:12.5px; width:150px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .stat-bar-track{ flex:1; height:14px; background:var(--gray-bg); border-radius:8px; overflow:hidden; }
+  .stat-bar-fill{ height:100%; border-radius:8px; background:var(--teal); }
+  .stat-count{ font-family:var(--font-mono); font-size:12px; color:var(--ink-soft); width:28px; text-align:right; flex-shrink:0; }
+  .fab-scan{
+    position:fixed; bottom:22px; right:18px; width:56px; height:56px; border-radius:50%;
+    background:var(--teal); color:#fff; border:none; font-size:22px; box-shadow:0 6px 18px rgba(0,0,0,.25);
+    cursor:pointer; z-index:500;
+  }
+  .fab-scan:hover{ background:var(--teal-deep); }
+  .selection-bar{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 14px; background:var(--teal-deep); color:#fff; border-radius:10px; margin-bottom:12px;
+  }
+  .selection-bar .btn{ background:#fff; }
   .adr-card-list{ display:flex; flex-direction:column; gap:10px; }
   .adr-card{
     background:var(--panel); border:1px solid var(--line); border-radius:10px;
@@ -456,11 +493,12 @@
 </header>
 
 <div class="tabs">
-  <div class="tab active" data-tab="offen" onclick="switchTab('offen')">Offene Aufträge <span class="n" id="tabCountOffen">0</span></div>
-  <div class="tab" data-tab="erledigt" onclick="switchTab('erledigt')">Erledigte Aufträge <span class="n" id="tabCountErledigt">0</span></div>
-  <div class="tab" data-tab="termine" onclick="switchTab('termine')">📅 Termine <span class="n" id="tabCountTermine">0</span></div>
-  <div class="tab" data-tab="adressbuch" onclick="switchTab('adressbuch')">Adressbuch <span class="n" id="tabCountAdr">0</span></div>
-  <div class="tab" data-tab="einstellungen" onclick="switchTab('einstellungen')">⚙️ Einstellungen</div>
+  <div class="tab active" data-tab="offen" onclick="switchTab('offen')" title="Offene Aufträge">📋 <span class="n" id="tabCountOffen">0</span></div>
+  <div class="tab" data-tab="erledigt" onclick="switchTab('erledigt')" title="Erledigte Aufträge">✅ <span class="n" id="tabCountErledigt">0</span></div>
+  <div class="tab" data-tab="termine" onclick="switchTab('termine')" title="Termine">📅 <span class="n" id="tabCountTermine">0</span><span class="n" id="tabCountCallback" style="display:none;background:var(--red);color:#fff"></span></div>
+  <div class="tab" data-tab="adressbuch" onclick="switchTab('adressbuch')" title="Adressbuch">📇 <span class="n" id="tabCountAdr">0</span></div>
+  <div class="tab" data-tab="statistik" onclick="switchTab('statistik')" title="Statistik">📊</div>
+  <div class="tab" data-tab="einstellungen" onclick="switchTab('einstellungen')" title="Einstellungen">⚙️</div>
 </div>
 
 <main>
@@ -468,11 +506,15 @@
   <div id="view-erledigt" style="display:none"></div>
   <div id="view-termine" style="display:none"></div>
   <div id="view-adressbuch" style="display:none"></div>
+  <div id="view-statistik" style="display:none"></div>
   <div id="view-einstellungen" style="display:none"></div>
 </main>
 
 <input type="file" id="csvInput" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" style="display:none">
 <input type="file" id="backupInput" accept=".json" style="display:none">
+<input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+
+<button class="fab-scan" onclick="openScanner()" title="Zähler scannen">📷</button>
 
 <div class="toast" id="toast"></div>
 
@@ -501,7 +543,8 @@ let pendingCsvRows = null; // rows waiting on mapping confirmation
 let pendingCsvHeaders = null;
 let terminModalAuftragId = null;
 let historyModalTarget = null;
-let viewMode = { offen: 'liste', erledigt: 'liste' };
+let viewMode = { offen: 'liste', erledigt: 'liste', adressbuch: 'liste' };
+let selection = { offen: new Set(), erledigt: new Set() };
 let mapInstances = {};
 const DEFAULT_VISIBLE_COLUMNS = {
   kundenname: true, vorgang: true, auftragsbeschreibung: true, status: true, telefonnummer: true, email: true, adresse: true,
@@ -531,6 +574,11 @@ function nowIso(){ return new Date().toISOString(); }
 function fmtTs(iso){
   const d = new Date(iso);
   return d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit'});
+}
+function fmtDateDe(isoDate){
+  if(!isoDate) return '';
+  const [y,m,d] = isoDate.split('-');
+  return `${d}.${m}.${y}`;
 }
 function norm(s){ return (s||'').toString().trim().toLowerCase(); }
 function parseCoords(str){
@@ -576,6 +624,82 @@ async function kvSet(key, val){
     catch(e){ showToast('Speichern fehlgeschlagen: ' + key); return; }
   }
   try{ localStorage.setItem('am_' + key, val); }catch(e){ showToast('Speichern fehlgeschlagen: ' + key); }
+}
+
+/* ---------------------------------------------------------------
+   Foto-Anhang pro Auftrag (eigener Storage-Key pro Auftrag,
+   damit der Haupt-Datensatz klein bleibt)
+--------------------------------------------------------------- */
+let photoTargetAuftragId = null;
+
+function compressImageFile(file){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = (e) => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      const maxW = 1000;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.72));
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function triggerPhotoCapture(auftragId){
+  photoTargetAuftragId = auftragId;
+  document.getElementById('photoInput').click();
+}
+
+document.getElementById('photoInput').addEventListener('change', async function(e){
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file || !photoTargetAuftragId) return;
+  try{
+    const dataUrl = await compressImageFile(file);
+    await kvSet('photo_' + photoTargetAuftragId, dataUrl);
+    showToast('Foto gespeichert');
+    refreshPhotoArea(photoTargetAuftragId);
+  }catch(err){
+    showToast('Foto konnte nicht verarbeitet werden');
+  }
+});
+
+async function refreshPhotoArea(auftragId){
+  const area = document.getElementById('photoArea');
+  if(!area) return; // modal already closed
+  const dataUrl = await kvGet('photo_' + auftragId);
+  area.innerHTML = photoAreaHtml(auftragId, dataUrl);
+}
+
+function photoAreaHtml(auftragId, dataUrl){
+  if(dataUrl){
+    return `
+      <img src="${dataUrl}" style="width:100%;border-radius:8px;display:block;margin-bottom:8px;cursor:pointer" onclick="openPhotoFull('${auftragId}')">
+      <div class="settings-row">
+        <button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 Foto ersetzen</button>
+        <button class="btn small danger" onclick="deletePhoto('${auftragId}')">🗑 Foto löschen</button>
+      </div>`;
+  }
+  return `<button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 Foto aufnehmen</button>`;
+}
+
+async function openPhotoFull(auftragId){
+  const dataUrl = await kvGet('photo_' + auftragId);
+  if(dataUrl){ window.open(dataUrl, '_blank'); }
+}
+
+async function deletePhoto(auftragId){
+  await kvSet('photo_' + auftragId, '');
+  showToast('Foto gelöscht');
+  refreshPhotoArea(auftragId);
 }
 
 async function loadAll(){
@@ -1411,7 +1535,9 @@ function switchTab(tab){
   document.getElementById('view-erledigt').style.display = tab === 'erledigt' ? '' : 'none';
   document.getElementById('view-termine').style.display = tab === 'termine' ? '' : 'none';
   document.getElementById('view-adressbuch').style.display = tab === 'adressbuch' ? '' : 'none';
+  document.getElementById('view-statistik').style.display = tab === 'statistik' ? '' : 'none';
   document.getElementById('view-einstellungen').style.display = tab === 'einstellungen' ? '' : 'none';
+  if(tab === 'statistik'){ document.getElementById('view-statistik').innerHTML = renderStatistik(); }
 }
 
 function render(){
@@ -1421,24 +1547,114 @@ function render(){
   document.getElementById('tabCountOffen').textContent = offen.length;
   document.getElementById('tabCountErledigt').textContent = erledigt.length;
   document.getElementById('tabCountTermine').textContent = mitTermin.length;
+  const todayIsoForBadge = new Date().toISOString().slice(0,10);
+  const dueCallbackCount = auftraege.filter(a => a.wiedervorlage && a.status !== 'erledigt' && a.wiedervorlage <= todayIsoForBadge).length;
+  const callbackBadge = document.getElementById('tabCountCallback');
+  if(callbackBadge){
+    callbackBadge.style.display = dueCallbackCount > 0 ? '' : 'none';
+    callbackBadge.textContent = '📞' + dueCallbackCount;
+  }
   document.getElementById('tabCountAdr').textContent = adressbuch.length;
 
   renderTabView('offen', offen);
   renderTabView('erledigt', erledigt);
-  document.getElementById('view-termine').innerHTML = renderTermine(mitTermin);
+  document.getElementById('view-termine').innerHTML = renderTermine(mitTermin, auftraege);
   document.getElementById('view-adressbuch').innerHTML = renderAdressbuch();
   document.getElementById('view-einstellungen').innerHTML = renderEinstellungen();
+  if(currentTab === 'statistik'){ document.getElementById('view-statistik').innerHTML = renderStatistik(); }
   updateOrgStamp();
 }
 
-function renderTermine(list){
+function renderStatistik(){
+  const total = auftraege.length;
+  const byStatus = {};
+  Object.keys(STATUS).forEach(k => byStatus[k] = 0);
+  auftraege.forEach(a => { byStatus[a.status] = (byStatus[a.status]||0) + 1; });
+
+  const byVorgang = {};
+  auftraege.forEach(a => { if(a.vorgang) byVorgang[a.vorgang] = (byVorgang[a.vorgang]||0) + 1; });
+  const vorgangSorted = Object.entries(byVorgang).sort((a,b) => b[1]-a[1]).slice(0, 8);
+
+  const now = new Date();
+  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - ((now.getDay()+6)%7)); startOfWeek.setHours(0,0,0,0);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  let erledigtWeek = 0, erledigtMonth = 0;
+  auftraege.forEach(a => {
+    if(a.status !== 'erledigt') return;
+    const entry = a.history.slice().reverse().find(h => h.field === 'status' && h.new === STATUS.erledigt.label);
+    if(!entry) return;
+    const d = new Date(entry.ts);
+    if(d >= startOfWeek) erledigtWeek++;
+    if(d >= startOfMonth) erledigtMonth++;
+  });
+
+  const maxStatusCount = Math.max(1, ...Object.values(byStatus));
+  const statusRows = Object.entries(STATUS).map(([k,v]) => `
+    <div class="stat-row">
+      <span class="stat-label">${v.label}</span>
+      <div class="stat-bar-track"><div class="stat-bar-fill ${v.cls}" style="width:${(byStatus[k]/maxStatusCount*100).toFixed(0)}%"></div></div>
+      <span class="stat-count">${byStatus[k]}</span>
+    </div>`).join('');
+
+  const maxVorgangCount = Math.max(1, ...vorgangSorted.map(v => v[1]));
+  const vorgangRows = vorgangSorted.map(([name,count]) => `
+    <div class="stat-row">
+      <span class="stat-label">${escapeHtml(name)}</span>
+      <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${(count/maxVorgangCount*100).toFixed(0)}%;background:${colorForVorgang(name)}"></div></div>
+      <span class="stat-count">${count}</span>
+    </div>`).join('');
+
+  return `
+    <div class="settings-section">
+      <h4>Überblick</h4>
+      <div class="stat-summary">
+        <div class="stat-tile"><div class="stat-tile-num">${total}</div><div class="stat-tile-label">Gesamt</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${byStatus.offen||0}</div><div class="stat-tile-label">Offen</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${byStatus.erledigt||0}</div><div class="stat-tile-label">Erledigt</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${erledigtWeek}</div><div class="stat-tile-label">Diese Woche erledigt</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${erledigtMonth}</div><div class="stat-tile-label">Diesen Monat erledigt</div></div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h4>Nach Status</h4>
+      ${statusRows}
+    </div>
+    <div class="settings-section">
+      <h4>Nach Vorgangstyp (Top 8)</h4>
+      ${vorgangRows || '<p class="hint">Noch keine Daten</p>'}
+    </div>
+  `;
+}
+
+function renderTermine(list, allAuftraege){
+  const todayIso = new Date().toISOString().slice(0,10);
+  const withCallback = (allAuftraege || []).filter(a => a.wiedervorlage && a.status !== 'erledigt');
+  const dueCallbacks = withCallback.filter(a => a.wiedervorlage <= todayIso).sort((a,b) => a.wiedervorlage.localeCompare(b.wiedervorlage));
+  const upcomingCallbacks = withCallback.filter(a => a.wiedervorlage > todayIso).sort((a,b) => a.wiedervorlage.localeCompare(b.wiedervorlage));
+
+  const callbackItemHtml = (a, overdue) => `
+    <div class="agenda-item" onclick="openAuftragEditModal('${a.id}')">
+      <div class="agenda-time">📞</div>
+      <div class="agenda-main">
+        <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
+        <div class="agenda-sub">${overdue ? 'Rückruf fällig seit ' : 'Rückruf am '}${fmtDateDe(a.wiedervorlage)}${a.telefonnummer ? ' · ' + escapeHtml(a.telefonnummer) : ''}</div>
+      </div>
+      <div class="pop-status" style="background:${overdue?'#f5e0dd':'#dde7f2'};color:${overdue?'#a3392f':'#2b5a8c'};white-space:nowrap">${overdue ? 'Heute anrufen' : 'Geplant'}</div>
+    </div>`;
+
+  const callbackSection = withCallback.length === 0 ? '' : `
+    <div class="agenda-group">
+      <div class="agenda-date-header" style="color:var(--red)">📞 Rückrufe</div>
+      ${dueCallbacks.map(a => callbackItemHtml(a, true)).join('')}
+      ${upcomingCallbacks.map(a => callbackItemHtml(a, false)).join('')}
+    </div>`;
+
   if(list.length === 0){
-    return `<div class="empty-state">
+    return callbackSection || `<div class="empty-state">
       <div class="big">Noch keine Termine vereinbart</div>
       <div>Termine, die du über 📅 bei einem Auftrag festlegst, erscheinen hier chronologisch.</div>
     </div>`;
   }
-  const todayIso = new Date().toISOString().slice(0,10);
   const sorted = list.slice().sort((a,b) => {
     const da = a.termin.dateIso + 'T' + a.termin.time, db = b.termin.dateIso + 'T' + b.termin.time;
     return da.localeCompare(db);
@@ -1481,7 +1697,7 @@ function renderTermine(list){
       </div>`;
   }).join('');
 
-  return `<div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
+  return `<div class="grid-wrap" style="padding:8px 0">${callbackSection}${groupsHtml}</div>`;
 }
 
 function renderEinstellungen(){
@@ -1755,6 +1971,14 @@ function applyMultiFilter(){
 function renderTabView(tabKey, fullList){
   const container = document.getElementById('view-' + tabKey);
   const list = applyFilters(fullList, tabKey);
+  const selCount = selection[tabKey].size;
+  const selectionBarHtml = selCount > 0 ? `
+    <div class="selection-bar">
+      <span>${selCount} ausgewählt</span>
+      <button class="btn small" onclick="openBulkStatusModal('${tabKey}')">Status ändern</button>
+      <button class="btn small" onclick="planRouteForSelection('${tabKey}')">🗺️ Route planen</button>
+      <button class="btn small ghost" style="color:#fff" onclick="clearSelection('${tabKey}')">Auswahl aufheben</button>
+    </div>` : '';
   const toggleHtml = `
     <div class="view-toggle">
       <button class="btn small ${viewMode[tabKey]==='liste'?'active':''}" onclick="setViewMode('${tabKey}','liste')">📋 Liste</button>
@@ -1770,11 +1994,11 @@ function renderTabView(tabKey, fullList){
   const filterHtml = renderFilterBar(tabKey, fullList);
 
   if(viewMode[tabKey] === 'karte'){
-    container.innerHTML = filterHtml + toggleHtml + renderMapLegend(tabKey, list) + `<div id="map-${tabKey}" style="height:540px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>`;
+    container.innerHTML = selectionBarHtml + filterHtml + toggleHtml + renderMapLegend(tabKey, list) + `<div id="map-${tabKey}" style="height:540px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>`;
     initMapForTab(tabKey, list);
   } else {
     if(mapInstances[tabKey]){ mapInstances[tabKey].remove(); delete mapInstances[tabKey]; }
-    container.innerHTML = filterHtml + toggleHtml + renderAuftragTable(list, tabKey === 'erledigt');
+    container.innerHTML = selectionBarHtml + filterHtml + toggleHtml + renderAuftragTable(list, tabKey === 'erledigt');
   }
 }
 
@@ -1876,6 +2100,199 @@ function phoneSearchUrl(name, adresse){
   const q = [name, adresse, 'Telefonnummer'].filter(Boolean).join(' ');
   return 'https://www.google.com/search?q=' + encodeURIComponent(q);
 }
+/* ---------------------------------------------------------------
+   Zähler-Scanner (QR/Barcode via Kamera)
+--------------------------------------------------------------- */
+let html5QrScanner = null;
+
+function openScanner(){
+  if(typeof Html5Qrcode === 'undefined'){
+    showToast('Scanner konnte nicht geladen werden (kein Internet?)');
+    return;
+  }
+  showModal(`
+    <div class="modal-head"><h3>Zähler scannen</h3><button class="close-x" onclick="closeScannerModal()">✕</button></div>
+    <div class="modal-body">
+      <div id="qr-reader" style="width:100%;border-radius:8px;overflow:hidden"></div>
+      <p class="hint">Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Adressbuch.</p>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeScannerModal()">Abbrechen</button></div>
+  `);
+  startScanner();
+}
+
+function startScanner(){
+  html5QrScanner = new Html5Qrcode('qr-reader');
+  html5QrScanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: 220 },
+    (decodedText) => onScanSuccess(decodedText),
+    () => { /* per-frame scan miss, ignore */ }
+  ).catch(() => {
+    showToast('Kamera konnte nicht gestartet werden — Berechtigung erteilt?');
+  });
+}
+
+function closeScannerModal(){
+  if(html5QrScanner){
+    html5QrScanner.stop().catch(() => {}).finally(() => { html5QrScanner = null; });
+  }
+  closeModal();
+}
+
+function onScanSuccess(decodedText){
+  if(html5QrScanner){ html5QrScanner.stop().catch(() => {}); html5QrScanner = null; }
+  closeModal();
+  const val = decodedText.trim();
+  let found = auftraege.find(a => a.zaehler && a.zaehler.trim() === val);
+  if(!found) found = auftraege.find(a => a.zaehler && a.zaehler.includes(val));
+  if(found){
+    openAuftragEditModal(found.id);
+    return;
+  }
+  const adrHit = adressbuch.find(e => e.zaehler && (e.zaehler.trim() === val || e.zaehler.includes(val)));
+  if(adrHit){
+    switchTab('adressbuch');
+    adrDetailsOpen[adrHit.id] = true;
+    render();
+    showToast('Im Adressbuch gefunden: ' + (adrHit.kundenname || adrHit.adresse));
+    return;
+  }
+  showToast('Kein Auftrag mit Zähler „' + val + '" gefunden');
+}
+
+/* ---------------------------------------------------------------
+   Sprachnotiz-Diktierfunktion (Web Speech API)
+--------------------------------------------------------------- */
+function startDictation(targetId){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    showToast('Diktierfunktion wird von diesem Browser nicht unterstützt (Chrome/Edge nutzen)');
+    return;
+  }
+  const btn = document.getElementById('dictate_' + targetId);
+  const recog = new SpeechRecognition();
+  recog.lang = 'de-DE';
+  recog.interimResults = false;
+  recog.maxAlternatives = 1;
+  if(btn){ btn.textContent = '🔴'; btn.title = 'Aufnahme läuft…'; }
+  recog.onresult = (event) => {
+    const text = event.results[0][0].transcript;
+    const el = document.getElementById(targetId);
+    if(el){ el.value = el.value ? el.value.trim() + ' ' + text : text; }
+  };
+  recog.onerror = () => { showToast('Diktat fehlgeschlagen oder Mikrofon nicht erlaubt'); };
+  recog.onend = () => { if(btn){ btn.textContent = '🎙️'; btn.title = 'Diktieren'; } };
+  try{ recog.start(); }catch(e){ showToast('Diktat konnte nicht gestartet werden'); }
+}
+
+/* ---------------------------------------------------------------
+   Mehrfachauswahl: Sammel-Bearbeitung + Routenplanung
+--------------------------------------------------------------- */
+function toggleSelect(tabKey, id){
+  const sel = selection[tabKey];
+  if(sel.has(id)) sel.delete(id); else sel.add(id);
+  render();
+}
+function toggleSelectAll(tabKey, checked){
+  const fullList = getFullListForTab(tabKey);
+  const list = applyFilters(fullList, tabKey);
+  const sel = selection[tabKey];
+  if(checked){ list.forEach(a => sel.add(a.id)); }
+  else{ list.forEach(a => sel.delete(a.id)); }
+  render();
+}
+function clearSelection(tabKey){
+  selection[tabKey].clear();
+  render();
+}
+
+function openBulkStatusModal(tabKey){
+  const count = selection[tabKey].size;
+  showModal(`
+    <div class="modal-head"><h3>Status für ${count} Aufträge ändern</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Neuer Status</label>
+        <select id="bulkStatusSelect">
+          ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="applyBulkStatus('${tabKey}')">Anwenden</button>
+    </div>
+  `);
+}
+function applyBulkStatus(tabKey){
+  const newStatus = document.getElementById('bulkStatusSelect').value;
+  const ids = Array.from(selection[tabKey]);
+  ids.forEach(id => setStatus(id, newStatus, true));
+  selection[tabKey].clear();
+  closeModal();
+  render();
+  showToast(`Status für ${ids.length} Aufträge geändert`);
+}
+
+function haversineKm(lat1, lon1, lat2, lon2){
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI/180, dLon = (lon2-lon1) * Math.PI/180;
+  const aa = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(aa));
+}
+
+function planRouteForSelection(tabKey){
+  const ids = Array.from(selection[tabKey]);
+  const items = auftraege.filter(a => ids.includes(a.id) && a.koordinaten);
+  const skipped = ids.length - items.length;
+  if(items.length === 0){
+    showToast('Keine der ausgewählten Aufträge hat Koordinaten');
+    return;
+  }
+  if(skipped > 0) showToast(`${skipped} ohne Koordinaten werden übersprungen`);
+
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      (pos) => buildAndOpenRoute(items, { lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => buildAndOpenRoute(items, null),
+      { timeout: 6000 }
+    );
+  } else {
+    buildAndOpenRoute(items, null);
+  }
+}
+
+function buildAndOpenRoute(items, start){
+  const remaining = items.slice();
+  const route = [];
+  let current = start;
+  if(!current){
+    current = { lat: remaining[0].koordinaten.lat, lon: remaining[0].koordinaten.lon };
+    route.push(remaining.shift());
+  }
+  while(remaining.length){
+    let bestIdx = 0, bestDist = Infinity;
+    remaining.forEach((it, idx) => {
+      const dist = haversineKm(current.lat, current.lon, it.koordinaten.lat, it.koordinaten.lon);
+      if(dist < bestDist){ bestDist = dist; bestIdx = idx; }
+    });
+    const next = remaining.splice(bestIdx, 1)[0];
+    route.push(next);
+    current = { lat: next.koordinaten.lat, lon: next.koordinaten.lon };
+  }
+
+  const originParam = start ? `${start.lat},${start.lon}` : `${route[0].koordinaten.lat},${route[0].koordinaten.lon}`;
+  const destination = route[route.length - 1];
+  const destParam = `${destination.koordinaten.lat},${destination.koordinaten.lon}`;
+  const waypointItems = start ? route.slice(0, -1) : route.slice(1, -1);
+  const waypointsParam = waypointItems.map(it => `${it.koordinaten.lat},${it.koordinaten.lon}`).join('|');
+
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=driving`;
+  if(waypointsParam) url += `&waypoints=${encodeURIComponent(waypointsParam)}`;
+  window.open(url, '_blank');
+}
+
 function navigateToAuftrag(id){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
@@ -1969,6 +2386,7 @@ function getColumnLabel(key){
 }
 
 function renderAuftragTable(list, isErledigtTab){
+  const tabKey = isErledigtTab ? 'erledigt' : 'offen';
   if(list.length === 0){
     return `<div class="empty-state">
       <div class="big">${isErledigtTab ? 'Noch keine erledigten Vorgänge' : 'Keine offenen Vorgänge'}</div>
@@ -1976,9 +2394,12 @@ function renderAuftragTable(list, isErledigtTab){
     </div>`;
   }
   const cols = getOrderedVisibleColumns();
+  const sel = selection[tabKey];
+  const allChecked = list.every(a => sel.has(a.id));
 
   const rows = list.slice().sort((a,b) => (a.kundencode||'').localeCompare(b.kundencode||'')).map(a => `
     <tr>
+      <td data-label="Auswahl"><input type="checkbox" ${sel.has(a.id)?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"></td>
       <td data-label="Kundencode"><span class="code-sm">${escapeHtml(a.kundencode)}</span></td>
       ${cols.map(key => getCellRenderer(key)(a)).join('')}
       <td data-label="Aktionen">
@@ -1992,7 +2413,7 @@ function renderAuftragTable(list, isErledigtTab){
     </tr>
   `).join('');
 
-  const headCells = ['<th>Kundencode</th>']
+  const headCells = [`<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll('${tabKey}', this.checked)"></th>`, '<th>Kundencode</th>']
     .concat(cols.map(key => `<th>${getColumnLabel(key)}</th>`))
     .concat(['<th></th>'])
     .join('');
@@ -2004,6 +2425,7 @@ function renderAuftragTable(list, isErledigtTab){
 }
 
 let adrSearch = '';
+let adrMapInstance = null;
 let adrDetailsOpen = {};
 
 function setAdrSearch(value){
@@ -2014,10 +2436,77 @@ function setAdrSearch(value){
   const newEl = document.getElementById('adrSearchInput');
   if(newEl){ newEl.focus(); if(cursorPos !== null) newEl.setSelectionRange(cursorPos, cursorPos); }
 }
+function setAdrViewMode(mode){
+  adrViewMode = mode;
+  document.getElementById('view-adressbuch').innerHTML = renderAdressbuch();
+}
+
+function initAdrMap(entries){
+  const withCoords = entries.filter(e => e.koordinaten);
+  const el = document.getElementById('map-adressbuch');
+  if(!el) return;
+  if(adrMapInstance){ adrMapInstance.remove(); adrMapInstance = null; }
+
+  if(withCoords.length === 0){
+    el.outerHTML = `<div class="map-empty">Keine Koordinaten im Adressbuch vorhanden.</div>`;
+    return;
+  }
+
+  const map = L.map('map-adressbuch');
+  adrMapInstance = map;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19
+  }).addTo(map);
+
+  const cluster = L.markerClusterGroup({ maxClusterRadius: 50 });
+  const bounds = [];
+  withCoords.forEach(e => {
+    const marker = L.marker([e.koordinaten.lat, e.koordinaten.lon]);
+    marker.bindPopup(`
+      <div class="pop-code">${escapeHtml(e.kundenname || e.kundencode || 'Messpunkt')}</div>
+      ${e.adresse ? `<div style="margin-top:4px">${escapeHtml(e.adresse)}</div>` : ''}
+      ${e.zaehlerplatzId ? `<div class="muted" style="font-family:var(--font-mono);font-size:11px">${escapeHtml(e.zaehlerplatzId)}</div>` : ''}
+      ${e.telefonnummer ? `<div class="muted">${escapeHtml(e.telefonnummer)}</div>` : ''}
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="btn small" onclick="navigateToAdr('${e.id}')" style="flex:1">🧭 Navigation</button>
+        <button class="btn small primary" onclick="jumpToAdressbuchEntry('${e.id}')" style="flex:1">✏️ Öffnen</button>
+      </div>
+    `);
+    cluster.addLayer(marker);
+    bounds.push([e.koordinaten.lat, e.koordinaten.lon]);
+  });
+  map.addLayer(cluster);
+  map.fitBounds(bounds, { padding: [30,30] });
+}
+
+function navigateToAdr(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  let url;
+  if(e.koordinaten) url = `https://www.google.com/maps/dir/?api=1&destination=${e.koordinaten.lat},${e.koordinaten.lon}`;
+  else if(e.adresse) url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(e.adresse)}`;
+  else { showToast('Keine Adresse oder Koordinaten hinterlegt'); return; }
+  window.open(url, '_blank');
+}
+
+function jumpToAdressbuchEntry(id){
+  adrViewMode = 'liste';
+  adrDetailsOpen[id] = true;
+  render();
+  // scroll the entry into view once the list is rendered
+  setTimeout(() => {
+    const el = document.getElementById('adrSearchInput');
+    if(el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+  }, 50);
+}
+
 function toggleAdrDetails(id){
   adrDetailsOpen[id] = !adrDetailsOpen[id];
   document.getElementById('view-adressbuch').innerHTML = renderAdressbuch();
 }
+
+let adrViewMode = 'liste';
 
 function renderAdressbuch(){
   if(adressbuch.length === 0){
@@ -2039,9 +2528,22 @@ function renderAdressbuch(){
       ${filtered.length !== adressbuch.length ? `<span class="count-pill">${filtered.length} von ${adressbuch.length}</span>` : ''}
     </div>`;
 
+  const toggleHtml = `
+    <div class="view-toggle">
+      <button class="btn small ${adrViewMode==='liste'?'active':''}" onclick="setAdrViewMode('liste')">📋 Liste</button>
+      <button class="btn small ${adrViewMode==='karte'?'active':''}" onclick="setAdrViewMode('karte')">🗺️ Karte</button>
+    </div>`;
+
   if(filtered.length === 0){
-    return searchBar + `<div class="empty-state"><div class="big">Keine Treffer</div><div>Versuch einen anderen Suchbegriff.</div></div>`;
+    return searchBar + toggleHtml + `<div class="empty-state"><div class="big">Keine Treffer</div><div>Versuch einen anderen Suchbegriff.</div></div>`;
   }
+
+  if(adrViewMode === 'karte'){
+    setTimeout(() => initAdrMap(filtered), 0);
+    return searchBar + toggleHtml + `<div id="map-adressbuch" style="height:560px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>`;
+  }
+
+  if(adrMapInstance){ adrMapInstance.remove(); adrMapInstance = null; }
 
   const cards = filtered.slice().sort((a,b)=>(a.adresse||'').localeCompare(b.adresse||'')).map(e => {
     const detailsOpen = !!adrDetailsOpen[e.id];
@@ -2063,18 +2565,21 @@ function renderAdressbuch(){
       ${detailsOpen ? `
         <div class="adr-card-details">
           <div class="field"><label>E-Mail</label><input class="cell-input" type="text" value="${escapeHtml(e.email||'')}" onchange="updateAdrField('${e.id}','email', this.value)"></div>
-          <div class="field"><label>Standort</label><input class="cell-input" type="text" value="${escapeHtml(e.standort||'')}" onchange="updateAdrField('${e.id}','standort', this.value)"></div>
+          <div class="field-row">
+            <div class="field"><label>Zählerplatz-ID</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehlerplatzId||'')}" onchange="updateAdrField('${e.id}','zaehlerplatzId', this.value)" style="font-family:var(--font-mono);font-size:12px"></div>
+            <div class="field"><label>Standort</label><input class="cell-input" type="text" value="${escapeHtml(e.standort||'')}" onchange="updateAdrField('${e.id}','standort', this.value)"></div>
+          </div>
           <div class="field-row">
             <div class="field"><label>Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehler||'')}" onchange="updateAdrField('${e.id}','zaehler', this.value)"></div>
             <div class="field"><label>Bauform Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.bauform||'')}" onchange="updateAdrField('${e.id}','bauform', this.value)"></div>
           </div>
           <div class="field"><label>Koordinaten</label><input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="font-family:var(--font-mono);font-size:12px"></div>
-          <p class="hint">Zählerplatz-ID: <span class="code">${escapeHtml(e.zaehlerplatzId || '–')}</span> · Kundencode: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
+          <p class="hint">Kundencode: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
         </div>` : ''}
     </div>`;
   }).join('');
 
-  return searchBar + `<div class="adr-card-list">${cards}</div>`;
+  return searchBar + toggleHtml + `<div class="adr-card-list">${cards}</div>`;
 }
 function updateAdrCoordsField(entryId, value){
   if(!value.trim()){ updateAdrCoords(entryId, null); render(); return; }
@@ -2150,6 +2655,7 @@ function openAuftragEditModal(id){
       <button class="close-x" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
+      <div id="photoArea" style="margin-bottom:14px">Lädt…</div>
       <div class="ro-info-grid">
         ${infoRow('Kundenname', a.kundenname)}
         ${infoRow('Adresse', a.adresse)}
@@ -2182,8 +2688,33 @@ function openAuftragEditModal(id){
         </div>
       </div>
       <div class="field">
-        <label>Notiz</label>
+        <label style="display:flex;align-items:center;justify-content:space-between">
+          Notiz
+          <button type="button" class="icon-btn" id="dictate_edit_kommentar" onclick="startDictation('edit_kommentar')" title="Diktieren">🎙️</button>
+        </label>
         <textarea id="edit_kommentar" rows="3">${escapeHtml(a.kommentar||'')}</textarea>
+      </div>
+      <div class="field">
+        <label>Wiedervorlage (Rückruf-Erinnerung)</label>
+        <div class="settings-row" style="margin-bottom:6px">
+          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 2)">+2 Tage</button>
+          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 7)">+1 Woche</button>
+          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 14)">+2 Wochen</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="date" id="edit_wiedervorlage" value="${escapeHtml(a.wiedervorlage||'')}" style="flex:1" onchange="saveWiedervorlage('${a.id}', this.value)">
+          ${a.wiedervorlage ? `<button class="icon-btn" onclick="saveWiedervorlage('${a.id}', '')" title="Entfernen">🗑</button>` : ''}
+        </div>
+        <p class="hint">Taucht ab diesem Datum ganz oben im Reiter „📅 Termine" als Rückruf-Erinnerung auf.</p>
+      </div>
+      <div class="field">
+        <label>Materialliste</label>
+        <div id="materialList">${renderMaterialList(a)}</div>
+        <div class="settings-row" style="margin-top:6px">
+          <input type="text" id="newMaterialName" placeholder="Material" class="new-field-input" style="flex:2;min-width:120px;padding:8px 11px;border:1px solid var(--line);border-radius:6px;font-size:13.5px">
+          <input type="text" id="newMaterialMenge" placeholder="Menge" class="new-field-input" style="flex:1;min-width:70px;padding:8px 11px;border:1px solid var(--line);border-radius:6px;font-size:13.5px">
+          <button class="btn small" onclick="addMaterial('${a.id}')">+ Hinzufügen</button>
+        </div>
       </div>
       ${renderCustomFieldInputs(a)}
       ${a.termin ? `<p class="hint">Termin: <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
@@ -2199,6 +2730,73 @@ function openAuftragEditModal(id){
       <button class="btn primary" onclick="saveAuftragEditModal('${a.id}')">Speichern</button>
     </div>
   `);
+  refreshPhotoArea(id);
+}
+
+/* ---------------------------------------------------------------
+   Materialliste pro Auftrag (Bezeichnung, Menge, Datum)
+--------------------------------------------------------------- */
+function renderMaterialList(a){
+  const items = a.material || [];
+  if(items.length === 0) return '<p class="hint" style="margin:4px 0">Noch kein Material erfasst.</p>';
+  return `<div class="material-list">${items.map((m, idx) => `
+    <div class="material-row">
+      <span class="material-name">${escapeHtml(m.name)}</span>
+      <span class="material-menge">${escapeHtml(m.menge||'')}</span>
+      <span class="material-datum">${escapeHtml(m.datum)}</span>
+      <button class="icon-btn" onclick="removeMaterial('${a.id}', ${idx})" title="Entfernen">🗑</button>
+    </div>`).join('')}</div>`;
+}
+
+function addMaterial(auftragId){
+  const nameEl = document.getElementById('newMaterialName');
+  const mengeEl = document.getElementById('newMaterialMenge');
+  const name = nameEl ? nameEl.value.trim() : '';
+  const menge = mengeEl ? mengeEl.value.trim() : '';
+  if(!name){ showToast('Bitte eine Materialbezeichnung eingeben'); return; }
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  if(!a.material) a.material = [];
+  const datum = new Date().toLocaleDateString('de-DE');
+  a.material.push({ name, menge, datum });
+  a.history.push({ ts: nowIso(), field:'material', old:'', new: `${name}${menge?' ('+menge+')':''} am ${datum}` });
+  saveAuftraege();
+  document.getElementById('materialList').innerHTML = renderMaterialList(a);
+  if(nameEl) nameEl.value = '';
+  if(mengeEl) mengeEl.value = '';
+  showToast('Material hinzugefügt');
+}
+
+function removeMaterial(auftragId, idx){
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a || !a.material) return;
+  const removed = a.material.splice(idx, 1)[0];
+  if(removed) a.history.push({ ts: nowIso(), field:'material', old: `${removed.name} entfernt`, new:'' });
+  saveAuftraege();
+  document.getElementById('materialList').innerHTML = renderMaterialList(a);
+}
+
+/* ---------------------------------------------------------------
+   Wiedervorlage / Rückruf-Erinnerung
+--------------------------------------------------------------- */
+function setWiedervorlageQuick(auftragId, daysFromNow){
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  const iso = d.toISOString().slice(0,10);
+  saveWiedervorlage(auftragId, iso);
+  const el = document.getElementById('edit_wiedervorlage');
+  if(el) el.value = iso;
+}
+function saveWiedervorlage(auftragId, isoDateOrEmpty){
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  const oldVal = a.wiedervorlage || '';
+  if(oldVal === isoDateOrEmpty) return;
+  a.history.push({ ts: nowIso(), field:'wiedervorlage', old: oldVal ? fmtDateDe(oldVal) : '', new: isoDateOrEmpty ? fmtDateDe(isoDateOrEmpty) : 'entfernt' });
+  a.wiedervorlage = isoDateOrEmpty;
+  saveAuftraege();
+  render();
+  showToast(isoDateOrEmpty ? 'Rückruf-Erinnerung gesetzt: ' + fmtDateDe(isoDateOrEmpty) : 'Rückruf-Erinnerung entfernt');
 }
 
 function renderCustomFieldInputs(a){
