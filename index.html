@@ -728,9 +728,11 @@ const saveAdressbuch = () => { persist('adressbuch', adressbuch); scheduleFolder
 const saveSettings   = () => { persist('settings', settings); scheduleFolderSync(); };
 const saveMapping    = () => { persist('column-mapping', columnMapping); scheduleFolderSync(); };
 
-/* --- Linked folder (Desktop Chrome/Edge only) ---------------------
-   Stores a FileSystemDirectoryHandle in IndexedDB so the permission
-   can be silently reused across page reloads (where the browser allows). */
+/* --- Linked file (Desktop Chrome/Edge only) ------------------------
+   Stores a FileSystemFileHandle in IndexedDB so the permission
+   can be silently reused across page reloads (where the browser allows).
+   Uses the file-picker (not the folder-picker) since that's the dialog
+   that reliably shows OneDrive/SharePoint locations. */
 function idbHandleDb(){
   return new Promise((resolve,reject) => {
     const req = indexedDB.open('auftragsmappe-fs', 1);
@@ -744,7 +746,7 @@ async function idbGetHandle(){
     const db = await idbHandleDb();
     return await new Promise((resolve) => {
       const tx = db.transaction('handles','readonly');
-      const r = tx.objectStore('handles').get('dir');
+      const r = tx.objectStore('handles').get('file');
       r.onsuccess = () => resolve(r.result || null);
       r.onerror = () => resolve(null);
     });
@@ -755,7 +757,7 @@ async function idbSetHandle(handle){
     const db = await idbHandleDb();
     await new Promise((resolve) => {
       const tx = db.transaction('handles','readwrite');
-      tx.objectStore('handles').put(handle, 'dir');
+      tx.objectStore('handles').put(handle, 'file');
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
@@ -764,18 +766,34 @@ async function idbSetHandle(handle){
 
 async function chooseFolder(){
   if(!FS_SUPPORTED){
-    showToast('Ordner-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
+    showToast('Datei-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
     return;
   }
   try{
-    const handle = await window.showDirectoryPicker();
+    let handle;
+    // Prefer picking an existing file (e.g. one already created by another device)
+    // so multiple devices can converge on the very same file.
+    try{
+      const [picked] = await window.showOpenFilePicker({
+        types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }],
+        excludeAcceptAllOption: false,
+        multiple: false
+      });
+      handle = picked;
+    }catch(openErr){
+      // user might prefer to create a new file instead — offer Save picker as fallback
+      handle = await window.showSaveFilePicker({
+        suggestedName: 'auftragsmappe-daten.json',
+        types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }]
+      });
+    }
     folderHandle = handle;
     folderNeedsPermission = false;
     await idbSetHandle(handle);
     await loadFromFolder(true);
     await saveToFolder();
     render();
-    showToast('Ordner verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
+    showToast('Datei verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
   }catch(e){ /* user cancelled the picker */ }
 }
 async function reconnectFolder(){
@@ -786,11 +804,11 @@ async function reconnectFolder(){
       folderNeedsPermission = false;
       await loadFromFolder(true);
       render();
-      showToast('Ordner wieder verbunden');
+      showToast('Datei wieder verbunden');
     } else {
       showToast('Zugriff wurde nicht erlaubt');
     }
-  }catch(e){ showToast('Verbindung zum Ordner fehlgeschlagen'); }
+  }catch(e){ showToast('Verbindung zur Datei fehlgeschlagen'); }
 }
 async function tryRestoreFolder(){
   if(!FS_SUPPORTED) return;
@@ -810,8 +828,7 @@ async function tryRestoreFolder(){
 async function loadFromFolder(silent){
   if(!folderHandle) return;
   try{
-    const fileHandle = await folderHandle.getFileHandle('auftragsmappe-daten.json', { create:true });
-    const file = await fileHandle.getFile();
+    const file = await folderHandle.getFile();
     const text = await file.text();
     if(!text || !text.trim()) return;
     const data = JSON.parse(text);
@@ -824,8 +841,7 @@ async function saveToFolder(){
   if(!folderHandle) return;
   try{
     const payload = { kind:'auftragsmappe-sicherung', version:1, exportedAt: nowIso(), auftraege, adressbuch, settings, columnMapping };
-    const fileHandle = await folderHandle.getFileHandle('auftragsmappe-daten.json', { create:true });
-    const writable = await fileHandle.createWritable();
+    const writable = await folderHandle.createWritable();
     await writable.write(JSON.stringify(payload, null, 2));
     await writable.close();
     settings.folderLastSync = nowIso();
@@ -840,20 +856,28 @@ function scheduleFolderSync(){
 /* ---------------------------------------------------------------
    Address book helpers
 --------------------------------------------------------------- */
-function findAdrEntry(zaehlerplatzId, kundencode, adresse){
+function findAdrEntry(zaehlerplatzId, kundencode, adresse, zaehler){
+  // Kundencode is the reliable, unique-per-location identifier in this data.
+  // When a Zähler(-nummer) is also present, match on the combination — that's
+  // more precise. Rows without a Zähler are typically Neuanlagen (new
+  // installations, no meter assigned yet), so those match on Kundencode alone.
+  if(kundencode && zaehler){
+    const hit = adressbuch.find(a => a.kundencode && a.zaehler
+      && norm(a.kundencode) === norm(kundencode) && norm(a.zaehler) === norm(zaehler));
+    if(hit) return hit;
+  }
+  if(kundencode){
+    const hit = adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
+    if(hit) return hit;
+  }
   if(zaehlerplatzId){
     const hit = adressbuch.find(a => a.zaehlerplatzId && norm(a.zaehlerplatzId) === norm(zaehlerplatzId));
     if(hit) return hit;
   }
-  // Without a Zählerplatz-ID, only merge when BOTH Kundencode and Adresse match —
-  // matching on Kundencode alone wrongly collapsed different metering points that
-  // happen to share a customer/contract number into a single address book entry.
-  if(!kundencode || !adresse) return null;
-  return adressbuch.find(a => !a.zaehlerplatzId && a.kundencode && a.adresse
-    && norm(a.kundencode) === norm(kundencode) && norm(a.adresse) === norm(adresse));
+  return null;
 }
 function upsertAdrFromImport(row){
-  let entry = findAdrEntry(row.zaehlerplatzId, row.kundencode, row.adresse);
+  let entry = findAdrEntry(row.zaehlerplatzId, row.kundencode, row.adresse, row.zaehler);
   if(!entry){
     entry = {
       id: uid(),
@@ -1831,23 +1855,23 @@ function renderEinstellungen(){
     </div>
 
     <div class="settings-section">
-      <h4>Eigener Datenordner (PC, Chrome/Edge)</h4>
+      <h4>Eigene Sicherungsdatei (PC, Chrome/Edge)</h4>
       <div class="settings-row">
         ${folderHandle && !folderNeedsPermission
-          ? `<button class="btn" onclick="chooseFolder()">📁 Anderen Ordner wählen</button>`
+          ? `<button class="btn" onclick="chooseFolder()">📄 Andere Datei wählen</button>`
           : folderNeedsPermission
-            ? `<button class="btn primary" onclick="reconnectFolder()">🔄 Ordner wieder verbinden</button>`
-            : `<button class="btn primary" onclick="chooseFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📁 Ordner verknüpfen</button>`
+            ? `<button class="btn primary" onclick="reconnectFolder()">🔄 Datei wieder verbinden</button>`
+            : `<button class="btn primary" onclick="chooseFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Datei verknüpfen</button>`
         }
       </div>
       <p class="hint">
         ${!FS_SUPPORTED
           ? 'Auf diesem Gerät/Browser nicht verfügbar (nur Desktop Chrome/Edge). Bitte weiterhin Sicherung exportieren/importieren nutzen.'
           : folderHandle && !folderNeedsPermission
-            ? 'Verknüpft — Änderungen werden automatisch in eine Datei in diesem Ordner geschrieben. Wähle dafür deinen OneDrive-/SharePoint-synchronisierten Ordner, dann landen die Daten zentral.' + (settings.folderLastSync ? ' Zuletzt gespeichert: ' + fmtTs(settings.folderLastSync) : '')
+            ? 'Verknüpft — Änderungen werden automatisch in diese Datei geschrieben. Wähle dafür eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, dann landen die Daten zentral.' + (settings.folderLastSync ? ' Zuletzt gespeichert: ' + fmtTs(settings.folderLastSync) : '')
             : folderNeedsPermission
-              ? 'Ordner war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
-              : 'Wähle einen lokalen Ordner (idealerweise deinen OneDrive-/SharePoint-synchronisierten Ordner). Die App liest und schreibt danach automatisch eine Datei darin — kein manueller Export mehr nötig auf diesem Gerät.'
+              ? 'Datei war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
+              : 'Wähle (oder erstelle) eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, z.B. "auftragsmappe-daten.json". Die App liest und schreibt danach automatisch dort hinein — kein manueller Export mehr nötig auf diesem Gerät.'
         }
       </p>
     </div>
