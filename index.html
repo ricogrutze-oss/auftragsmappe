@@ -840,15 +840,20 @@ function scheduleFolderSync(){
 /* ---------------------------------------------------------------
    Address book helpers
 --------------------------------------------------------------- */
-function findAdrEntry(zaehlerplatzId, kundencode){
+function findAdrEntry(zaehlerplatzId, kundencode, adresse){
   if(zaehlerplatzId){
     const hit = adressbuch.find(a => a.zaehlerplatzId && norm(a.zaehlerplatzId) === norm(zaehlerplatzId));
     if(hit) return hit;
   }
-  return adressbuch.find(a => !a.zaehlerplatzId && a.kundencode && norm(a.kundencode) === norm(kundencode));
+  // Without a Zählerplatz-ID, only merge when BOTH Kundencode and Adresse match —
+  // matching on Kundencode alone wrongly collapsed different metering points that
+  // happen to share a customer/contract number into a single address book entry.
+  if(!kundencode || !adresse) return null;
+  return adressbuch.find(a => !a.zaehlerplatzId && a.kundencode && a.adresse
+    && norm(a.kundencode) === norm(kundencode) && norm(a.adresse) === norm(adresse));
 }
 function upsertAdrFromImport(row){
-  let entry = findAdrEntry(row.zaehlerplatzId, row.kundencode);
+  let entry = findAdrEntry(row.zaehlerplatzId, row.kundencode, row.adresse);
   if(!entry){
     entry = {
       id: uid(),
