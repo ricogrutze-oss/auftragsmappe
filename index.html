@@ -919,7 +919,7 @@ function updateAuftragCoords(id, value){
     a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: '' });
     a.koordinaten = null;
     saveAuftraege();
-    if(a.adrEntryId) updateAdrCoords(a.adrEntryId, null);
+    updateAdrCoords(ensureAdrEntryForAuftrag(a).id, null);
     render();
     return;
   }
@@ -932,7 +932,7 @@ function updateAuftragCoords(id, value){
   a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: fmtCoords(parsed) });
   a.koordinaten = parsed;
   saveAuftraege();
-  if(a.adrEntryId) updateAdrCoords(a.adrEntryId, parsed);
+  updateAdrCoords(ensureAdrEntryForAuftrag(a).id, parsed);
   showToast('Gespeichert');
 }
 function captureGps(onSuccess){
@@ -2106,6 +2106,7 @@ function renderTabView(tabKey, fullList){
       <span>${selCount} ausgewählt</span>
       <button class="btn small" onclick="openBulkStatusModal('${tabKey}')">Status ändern</button>
       <button class="btn small" onclick="planRouteForSelection('${tabKey}')">🗺️ Route planen</button>
+      <button class="btn small" onclick="planBulkTermineForSelection('${tabKey}')">📅 Sammel-Termine</button>
       <button class="btn small ghost" style="color:#fff" onclick="clearSelection('${tabKey}')">Auswahl aufheben</button>
     </div>` : '';
   const toggleHtml = `
@@ -2399,13 +2400,15 @@ function planRouteForSelection(tabKey){
   }
 }
 
-function buildAndOpenRoute(items, start){
+function computeRouteOrder(items, start){
+  // Nearest-neighbor ordering. Returns [{ auftrag, travelKm }], travelKm = distance
+  // from the previous stop (0 for the very first stop).
   const remaining = items.slice();
-  const route = [];
+  const order = [];
   let current = start;
   if(!current){
     current = { lat: remaining[0].koordinaten.lat, lon: remaining[0].koordinaten.lon };
-    route.push(remaining.shift());
+    order.push({ auftrag: remaining.shift(), travelKm: 0 });
   }
   while(remaining.length){
     let bestIdx = 0, bestDist = Infinity;
@@ -2414,9 +2417,15 @@ function buildAndOpenRoute(items, start){
       if(dist < bestDist){ bestDist = dist; bestIdx = idx; }
     });
     const next = remaining.splice(bestIdx, 1)[0];
-    route.push(next);
+    order.push({ auftrag: next, travelKm: bestDist });
     current = { lat: next.koordinaten.lat, lon: next.koordinaten.lon };
   }
+  return order;
+}
+
+function buildAndOpenRoute(items, start){
+  const order = computeRouteOrder(items, start);
+  const route = order.map(o => o.auftrag);
 
   const originParam = start ? `${start.lat},${start.lon}` : `${route[0].koordinaten.lat},${route[0].koordinaten.lon}`;
   const destination = route[route.length - 1];
@@ -2427,6 +2436,154 @@ function buildAndOpenRoute(items, start){
   let url = `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=driving`;
   if(waypointsParam) url += `&waypoints=${encodeURIComponent(waypointsParam)}`;
   window.open(url, '_blank');
+}
+
+/* ---------------------------------------------------------------
+   Sammel-Termine für eine geplante Route (mit geschätzter Fahrzeit)
+--------------------------------------------------------------- */
+const ASSUMED_SPEED_KMH = 35; // grobe Annahme für Fahrzeit zwischen Stopps
+let tempBulkRoute = [];
+
+function planBulkTermineForSelection(tabKey){
+  const ids = Array.from(selection[tabKey]);
+  const items = auftraege.filter(a => ids.includes(a.id) && a.koordinaten);
+  if(items.length === 0){ showToast('Keine ausgewählten Aufträge mit Koordinaten'); return; }
+
+  const proceed = (start) => {
+    tempBulkRoute = computeRouteOrder(items, start);
+    tempBulkRoute._tabKey = tabKey;
+    openBulkTerminModal();
+  };
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      (pos) => proceed({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => proceed(null),
+      { timeout: 6000 }
+    );
+  } else proceed(null);
+}
+
+function openBulkTerminModal(){
+  const today = new Date().toISOString().slice(0,10);
+  showModal(`
+    <div class="modal-head"><h3>Sammel-Termine für Route (${tempBulkRoute.length} Stopps)</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-row">
+        <div class="field"><label>Datum</label><input type="date" id="bulkTerminDate" value="${today}" oninput="updateBulkTerminPreview()"></div>
+        <div class="field"><label>Startzeit</label><input type="time" id="bulkTerminStart" value="08:00" oninput="updateBulkTerminPreview()"></div>
+        <div class="field" style="max-width:130px"><label>Dauer je Stopp (Min.)</label><input type="number" id="bulkTerminDuration" value="30" min="5" step="5" oninput="updateBulkTerminPreview()"></div>
+      </div>
+      <p class="hint">Reihenfolge wie bei der Routenplanung. Fahrzeit dazwischen grob geschätzt (Ø ${ASSUMED_SPEED_KMH} km/h), je nach Entfernung.</p>
+      <div id="bulkTerminPreview">${renderBulkTerminPreview()}</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="confirmBulkTermine()">📅 Termine erstellen</button>
+    </div>
+  `);
+}
+
+function computeBulkTerminSchedule(){
+  const dateIso = document.getElementById('bulkTerminDate')?.value || new Date().toISOString().slice(0,10);
+  const startTime = document.getElementById('bulkTerminStart')?.value || '08:00';
+  const duration = parseInt(document.getElementById('bulkTerminDuration')?.value, 10) || 30;
+  const [y,mo,d] = dateIso.split('-').map(n=>parseInt(n,10));
+  const [hh,mm] = startTime.split(':').map(n=>parseInt(n,10));
+  let cursor = new Date(y, mo-1, d, hh, mm, 0);
+  return tempBulkRoute.map((stop, idx) => {
+    if(idx > 0){
+      const travelMin = Math.max(5, Math.round(stop.travelKm / ASSUMED_SPEED_KMH * 60));
+      cursor = new Date(cursor.getTime() + travelMin*60000);
+    }
+    const start = new Date(cursor.getTime());
+    const end = new Date(start.getTime() + duration*60000);
+    cursor = end;
+    return { auftrag: stop.auftrag, start, end, travelKm: stop.travelKm };
+  });
+}
+
+function renderBulkTerminPreview(){
+  const schedule = computeBulkTerminSchedule();
+  const rows = schedule.map((s, idx) => `
+    <div class="agenda-item" style="cursor:default">
+      <div class="agenda-time">${pad(s.start.getHours())}:${pad(s.start.getMinutes())}–${pad(s.end.getHours())}:${pad(s.end.getMinutes())}</div>
+      <div class="agenda-main">
+        <div class="agenda-title"><span class="code">${escapeHtml(s.auftrag.kundencode)}</span> ${escapeHtml(s.auftrag.kundenname||'')}</div>
+        <div class="agenda-sub">${escapeHtml(s.auftrag.adresse||'')}${idx>0 ? ' · ~' + Math.max(5, Math.round(s.travelKm/ASSUMED_SPEED_KMH*60)) + ' Min. Fahrzeit davor' : ''}</div>
+      </div>
+    </div>
+  `).join('');
+  return `<div class="grid-wrap" style="margin-top:10px">${rows}</div>`;
+}
+
+function updateBulkTerminPreview(){
+  const el = document.getElementById('bulkTerminPreview');
+  if(el) el.innerHTML = renderBulkTerminPreview();
+}
+
+function confirmBulkTermine(){
+  const schedule = computeBulkTerminSchedule();
+  const tabKey = tempBulkRoute._tabKey;
+  const icsBlocks = [];
+
+  schedule.forEach(s => {
+    const a = s.auftrag;
+    const dtStart = `${s.start.getFullYear()}${pad(s.start.getMonth()+1)}${pad(s.start.getDate())}T${pad(s.start.getHours())}${pad(s.start.getMinutes())}00`;
+    const dtEnd = `${s.end.getFullYear()}${pad(s.end.getMonth()+1)}${pad(s.end.getDate())}T${pad(s.end.getHours())}${pad(s.end.getMinutes())}00`;
+    const eventUid = uid() + '@auftragsmappe';
+    const descLines = [];
+    if(a.kundenname) descLines.push('Kunde: ' + a.kundenname);
+    if(a.telefonnummer) descLines.push('Telefon: ' + a.telefonnummer);
+    if(a.zaehler) descLines.push('Zähler: ' + a.zaehler);
+    if(a.kommentar) descLines.push('Notiz: ' + a.kommentar);
+    icsBlocks.push([
+      'BEGIN:VEVENT',
+      'UID:' + eventUid,
+      'DTSTAMP:' + new Date().toISOString().replace(/[-:]/g,'').split('.')[0] + 'Z',
+      'DTSTART:' + dtStart,
+      'DTEND:' + dtEnd,
+      'SUMMARY:' + icsEscape(a.vorgang || 'Termin'),
+      'LOCATION:' + icsEscape(a.adresse || ''),
+      'DESCRIPTION:' + icsEscape(descLines.join(String.fromCharCode(10))),
+      'STATUS:CONFIRMED',
+      'SEQUENCE:0',
+      'END:VEVENT'
+    ].join('\r\n'));
+
+    const dateIsoStop = `${s.start.getFullYear()}-${pad(s.start.getMonth()+1)}-${pad(s.start.getDate())}`;
+    const timeStop = `${pad(s.start.getHours())}:${pad(s.start.getMinutes())}`;
+    const oldTermin = a.termin ? `${a.termin.date} ${a.termin.time}` : '';
+    a.termin = {
+      dateIso: dateIsoStop,
+      date: `${pad(s.start.getDate())}.${pad(s.start.getMonth()+1)}.${s.start.getFullYear()}`,
+      time: timeStop,
+      duration: Math.round((s.end - s.start)/60000),
+      uid: eventUid, sequence: 0
+    };
+    a.history.push({ ts: nowIso(), field:'termin', old: oldTermin, new: `${a.termin.date} ${a.termin.time}` });
+    if(a.status === 'offen' || a.status === 'ohne_termin'){
+      a.history.push({ ts: nowIso(), field:'status', old: STATUS[a.status].label, new: STATUS.termin_vereinbart.label });
+      a.status = 'termin_vereinbart';
+    }
+  });
+
+  const icsContent = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Auftragsmappe//DE','CALSCALE:GREGORIAN','METHOD:PUBLISH']
+    .concat(icsBlocks).concat(['END:VCALENDAR']).join('\r\n');
+  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Route_${schedule.length}_Termine_${new Date().toISOString().slice(0,10)}.ics`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  saveAuftraege();
+  if(tabKey) selection[tabKey].clear();
+  closeModal();
+  render();
+  showToast(`${schedule.length} Termine erstellt und als Kalenderdatei heruntergeladen`);
 }
 
 function navigateToAuftrag(id){
@@ -2804,6 +2961,34 @@ function updateCustomField(id, key, value, silent){
   if(!silent) showToast('Gespeichert');
 }
 
+function ensureAdrEntryForAuftrag(a){
+  if(a.adrEntryId){
+    const existing = adressbuch.find(e => e.id === a.adrEntryId);
+    if(existing) return existing;
+  }
+  // Link is missing or points at a deleted entry (e.g. after "Adressbuch löschen")
+  // — heal it by creating a fresh entry from the Auftrag's current data instead
+  // of silently dropping the update.
+  const entry = {
+    id: uid(),
+    kundencode: a.kundencode || '',
+    zaehlerplatzId: a.zaehlerplatzId || '',
+    kundenname: a.kundenname || '',
+    adresse: a.adresse || '',
+    telefonnummer: a.telefonnummer || '',
+    email: a.email || '',
+    koordinaten: a.koordinaten || null,
+    zaehler: a.zaehler || '',
+    bauform: a.bauform || '',
+    standort: a.standort || '',
+    history: [{ ts: nowIso(), field:'angelegt', old:'', new:'automatisch ergänzt (Verknüpfung fehlte)' }]
+  };
+  adressbuch.push(entry);
+  a.adrEntryId = entry.id;
+  saveAdressbuch();
+  return entry;
+}
+
 function updateAuftragField(id, field, value, silent){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
@@ -2815,8 +3000,9 @@ function updateAuftragField(id, field, value, silent){
 
   // propagate persistent customer/meter fields into address book
   const propagatedFields = ['telefonnummer','email','adresse','kundenname','zaehler','bauform','standort'];
-  if(propagatedFields.includes(field) && a.adrEntryId){
-    updateAdrField(a.adrEntryId, field, value);
+  if(propagatedFields.includes(field)){
+    const entry = ensureAdrEntryForAuftrag(a);
+    updateAdrField(entry.id, field, value);
   }
   if(!silent) showToast('Gespeichert');
 }
