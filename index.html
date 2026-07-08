@@ -857,24 +857,11 @@ function scheduleFolderSync(){
    Address book helpers
 --------------------------------------------------------------- */
 function findAdrEntry(zaehlerplatzId, kundencode, adresse, zaehler){
-  // Kundencode is the reliable, unique-per-location identifier in this data.
-  // When a Zähler(-nummer) is also present, match on the combination — that's
-  // more precise. Rows without a Zähler are typically Neuanlagen (new
-  // installations, no meter assigned yet), so those match on Kundencode alone.
-  if(kundencode && zaehler){
-    const hit = adressbuch.find(a => a.kundencode && a.zaehler
-      && norm(a.kundencode) === norm(kundencode) && norm(a.zaehler) === norm(zaehler));
-    if(hit) return hit;
-  }
-  if(kundencode){
-    const hit = adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
-    if(hit) return hit;
-  }
-  if(zaehlerplatzId){
-    const hit = adressbuch.find(a => a.zaehlerplatzId && norm(a.zaehlerplatzId) === norm(zaehlerplatzId));
-    if(hit) return hit;
-  }
-  return null;
+  // Kundencode alone decides duplicates for the address book. Rows without a
+  // Kundencode can't be reliably matched against anything, so they always
+  // become a new entry rather than risk a wrong merge.
+  if(!kundencode) return null;
+  return adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
 }
 function upsertAdrFromImport(row){
   let entry = findAdrEntry(row.zaehlerplatzId, row.kundencode, row.adresse, row.zaehler);
@@ -895,15 +882,31 @@ function upsertAdrFromImport(row){
     };
     adressbuch.push(entry);
   } else {
-    // Fill only empty fields, never overwrite manual edits
-    if(!entry.adresse && row.adresse) entry.adresse = row.adresse;
-    if(!entry.telefonnummer && row.telefonnummer) entry.telefonnummer = row.telefonnummer;
-    if(!entry.email && row.email) entry.email = row.email;
+    // Merge into the existing entry: empty fields get filled in.
+    // If a field is already filled but the new import has a DIFFERENT value,
+    // keep both (combined) rather than silently dropping the new one.
+    const mergeField = (key) => {
+      const newVal = (row[key] || '').toString().trim();
+      if(!newVal) return;
+      const oldVal = (entry[key] || '').toString().trim();
+      if(!oldVal){
+        entry[key] = newVal;
+      } else if(norm(oldVal) !== norm(newVal)){
+        const parts = oldVal.split(' / ').map(p => p.trim());
+        if(!parts.some(p => norm(p) === norm(newVal))){
+          entry[key] = oldVal + ' / ' + newVal;
+          entry.history.push({ ts: nowIso(), field: key, old: oldVal, new: entry[key] });
+        }
+      }
+    };
+    mergeField('adresse');
+    mergeField('telefonnummer');
+    mergeField('email');
+    mergeField('kundenname');
+    mergeField('zaehler');
+    mergeField('bauform');
+    mergeField('standort');
     if(!entry.koordinaten && row.koordinaten) entry.koordinaten = row.koordinaten;
-    if(!entry.kundenname && row.kundenname) entry.kundenname = row.kundenname;
-    if(!entry.zaehler && row.zaehler) entry.zaehler = row.zaehler;
-    if(!entry.bauform && row.bauform) entry.bauform = row.bauform;
-    if(!entry.standort && row.standort) entry.standort = row.standort;
   }
   return entry;
 }
@@ -1208,10 +1211,6 @@ function runImport(){
     const kundencode = toStr(m.kundencode ? raw[m.kundencode] : '');
     const vorgang = toStr(m.vorgang ? raw[m.vorgang] : '');
     const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
-
-    // Need at least one identifier to create any record at all
-    if(!kundencode.trim() && !zaehlerplatzId.trim()){ skippedEmpty++; continue; }
-
     const telefonnummer = toStr(m.telefonnummer ? raw[m.telefonnummer] : '');
     const email = toStr(m.email ? raw[m.email] : '');
     const auftragsbeschreibung = toStr(m.auftragsbeschreibung ? raw[m.auftragsbeschreibung] : '');
@@ -1222,15 +1221,22 @@ function runImport(){
     const bauform = toStr(m.bauform ? raw[m.bauform] : '');
     const standort = toStr(m.standort ? raw[m.standort] : '');
 
+    // Only skip a row if there's truly nothing at all to record — every row
+    // with any usable field still gets an address book entry, even without
+    // a Kundencode or Zählerplatz-ID.
+    const hasAnyData = kundencode.trim() || zaehlerplatzId.trim() || adresse.trim()
+      || telefonnummer.trim() || kundenname.trim() || standort.trim() || zaehler.trim();
+    if(!hasAnyData){ skippedEmpty++; continue; }
+
     // Always keep the address book current — regardless of whether this
     // row has a Vorgang (Auftragstyp). This is the master data (Anschrift,
     // Zählerplatz-ID, Standort etc.) and should cover every metering point,
     // not just ones with a currently open order.
     const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, email, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
 
-    if(!vorgang.trim()){
+    if(!vorgang.trim() || !kundencode.trim()){
       adrOnly++;
-      continue; // no Auftragstyp on this row → address book updated, but no Auftrag created
+      continue; // no Auftragstyp and/or Kundencode on this row → address book updated, but no Auftrag created
     }
 
     const key = norm(kundencode) + '|' + norm(vorgang);
