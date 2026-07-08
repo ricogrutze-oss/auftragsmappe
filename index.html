@@ -935,6 +935,31 @@ function updateAuftragCoords(id, value){
   if(a.adrEntryId) updateAdrCoords(a.adrEntryId, parsed);
   showToast('Gespeichert');
 }
+function captureGps(onSuccess){
+  if(!navigator.geolocation){
+    showToast('Standortzugriff wird von diesem Gerät/Browser nicht unterstützt');
+    return;
+  }
+  showToast('Standort wird ermittelt…');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => onSuccess({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+    () => showToast('Standort konnte nicht ermittelt werden — Berechtigung erteilt?'),
+    { enableHighAccuracy: true, timeout: 12000 }
+  );
+}
+function captureGpsForAuftrag(id){
+  captureGps((coords) => {
+    updateAuftragCoords(id, fmtCoords(coords));
+    render();
+  });
+}
+function captureGpsForAdr(id){
+  captureGps((coords) => {
+    updateAdrCoords(id, coords);
+    render();
+    showToast('Koordinaten gespeichert: ' + fmtCoords(coords));
+  });
+}
 function updateAdrCoords(entryId, coords){
   const entry = adressbuch.find(a => a.id === entryId);
   if(!entry) return;
@@ -2520,8 +2545,11 @@ const CELL_RENDERERS = {
         onchange="updateAuftragField('${a.id}','inbetriebnahmeDatum', this.value)">
     </td>`,
   koordinaten: (a) => `<td data-label="${COLUMN_LABELS.koordinaten}">
-      <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(a.koordinaten))}"
-        onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px">
+      <div style="display:flex;gap:4px;align-items:center">
+        <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(a.koordinaten))}"
+          onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px;flex:1">
+        <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
+      </div>
     </td>`,
 };
 
@@ -2740,7 +2768,12 @@ function renderAdressbuch(){
             <div class="field"><label>Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehler||'')}" onchange="updateAdrField('${e.id}','zaehler', this.value)"></div>
             <div class="field"><label>Bauform Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.bauform||'')}" onchange="updateAdrField('${e.id}','bauform', this.value)"></div>
           </div>
-          <div class="field"><label>Koordinaten</label><input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="font-family:var(--font-mono);font-size:12px"></div>
+          <div class="field"><label>Koordinaten</label>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="flex:1;font-family:var(--font-mono);font-size:12px">
+              <button class="icon-btn" onclick="captureGpsForAdr('${e.id}')" title="Aktuellen Standort übernehmen">📍</button>
+            </div>
+          </div>
           <p class="hint">Kundencode: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
         </div>` : ''}
     </div>`;
@@ -2834,8 +2867,11 @@ function openAuftragEditModal(id){
       <div class="field-row">
         <div class="field">
           <label>📌 Koordinaten</label>
-          <input type="text" id="edit_koordinaten_display" value="${escapeHtml(fmtCoords(a.koordinaten))}"
-            onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:13px">
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="edit_koordinaten_display" value="${escapeHtml(fmtCoords(a.koordinaten))}"
+              onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="flex:1;font-family:var(--font-mono);font-size:13px">
+            <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
+          </div>
         </div>
         <div class="field">
           <label>📞 Telefon</label>
