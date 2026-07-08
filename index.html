@@ -224,7 +224,7 @@
     margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--line-soft);
   }
   .ro-info-item{ display:flex; flex-direction:column; gap:2px; min-width:0; }
-  .ro-info-label{ font-family:var(--font-mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); }
+  .ro-info-label{ font-family:var(--font-mono); font-size:13px; letter-spacing:.02em; color:var(--ink-soft); }
   .ro-info-val{ font-size:13.5px; color:var(--ink); word-break:break-word; }
   .custom-field-list{ display:flex; flex-direction:column; gap:4px; margin-bottom:4px; }
   .custom-field-row{
@@ -1282,7 +1282,7 @@ async function exportBackup(){
     columnMapping,
   };
   const jsonStr = JSON.stringify(payload, null, 2);
-  const filename = 'auftragsmappe-sicherung.json';
+  const filename = 'auftragsmappe-daten.json';
   const file = new File([jsonStr], filename, { type: 'application/json' });
 
   let shared = false;
@@ -1651,11 +1651,18 @@ function renderStatistik(){
   `;
 }
 
+let termineShowPast = false;
+
+function toggleTerminePast(){
+  termineShowPast = !termineShowPast;
+  render();
+}
+
 function renderTermine(list, allAuftraege){
   const todayIso = new Date().toISOString().slice(0,10);
 
   // Build one combined list of agenda entries: Termine + Rückrufe (Wiedervorlage)
-  const entries = [];
+  let entries = [];
   list.forEach(a => {
     entries.push({ type:'termin', auftrag:a, dateIso:a.termin.dateIso, date:a.termin.date, time:a.termin.time });
   });
@@ -1665,8 +1672,21 @@ function renderTermine(list, allAuftraege){
     }
   });
 
+  // By default: hide erledigt Aufträge and anything before today — done is done.
+  const hiddenCount = entries.filter(e => e.auftrag.status === 'erledigt' || e.dateIso < todayIso).length;
+  if(!termineShowPast){
+    entries = entries.filter(e => e.auftrag.status !== 'erledigt' && e.dateIso >= todayIso);
+  }
+
+  const toggleBarHtml = hiddenCount > 0 ? `
+    <div class="view-toggle">
+      <button class="btn small ${termineShowPast?'active':''}" onclick="toggleTerminePast()">
+        ${termineShowPast ? '🙈 Vergangene/erledigte wieder ausblenden' : `👁 ${hiddenCount} vergangene/erledigte anzeigen`}
+      </button>
+    </div>` : '';
+
   if(entries.length === 0){
-    return `<div class="empty-state">
+    return toggleBarHtml || `<div class="empty-state">
       <div class="big">Noch keine Termine oder Rückrufe</div>
       <div>Termine (📅) und Rückruf-Erinnerungen (📞) erscheinen hier zusammen, chronologisch nach Tag.</div>
     </div>`;
@@ -1724,7 +1744,7 @@ function renderTermine(list, allAuftraege){
       </div>`;
   }).join('');
 
-  return `<div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
+  return `${toggleBarHtml}<div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
 }
 
 function daysSinceLastBackup(){
@@ -2757,8 +2777,8 @@ function openAuftragEditModal(id){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
 
-  const infoRow = (label, value) => value
-    ? `<div class="ro-info-item"><span class="ro-info-label">${label}</span><span class="ro-info-val">${escapeHtml(value)}</span></div>`
+  const infoRow = (icon, label, value) => value
+    ? `<div class="ro-info-item"><span class="ro-info-label">${icon} ${label}</span><span class="ro-info-val">${escapeHtml(value)}</span></div>`
     : '';
 
   showModal(`
@@ -2769,28 +2789,29 @@ function openAuftragEditModal(id){
     <div class="modal-body">
       <div id="photoArea" style="margin-bottom:14px">Lädt…</div>
       <div class="ro-info-grid">
-        ${infoRow('Kundenname', a.kundenname)}
-        ${infoRow('Adresse', a.adresse)}
-        ${infoRow('Standort', a.standort)}
-        ${infoRow('Zähler', a.zaehler)}
-        ${infoRow('Bauform', a.bauform)}
-        ${infoRow('E-Mail', a.email)}
+        ${infoRow('👤', '', a.kundenname)}
+        ${infoRow('📍', '', a.adresse)}
+        ${infoRow('🏷️', '', a.standort)}
+        ${infoRow('🔢', '', a.zaehler)}
+        ${infoRow('🔧', '', a.bauform)}
+        ${infoRow('✉️', '', a.email)}
       </div>
-      <div class="field">
-        <label>Koordinaten</label>
-        <input type="text" id="edit_koordinaten_display" value="${escapeHtml(fmtCoords(a.koordinaten))}"
-          onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:13px">
-      </div>
-      <div class="field">
-        <label>Telefon</label>
-        <div style="display:flex;gap:6px;align-items:center">
-          <input type="text" id="edit_telefonnummer_display" value="${escapeHtml(a.telefonnummer)}"
-            onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1">
-          ${a.telefonnummer ? phoneButtonsHtml(a.telefonnummer) : `<button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍 Suchen</button>`}
+      <div class="field-row">
+        <div class="field">
+          <label>📌 Koordinaten</label>
+          <input type="text" id="edit_koordinaten_display" value="${escapeHtml(fmtCoords(a.koordinaten))}"
+            onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:13px">
+        </div>
+        <div class="field">
+          <label>📞 Telefon</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="edit_telefonnummer_display" value="${escapeHtml(a.telefonnummer)}"
+              onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1">
+            ${a.telefonnummer ? phoneButtonsHtml(a.telefonnummer) : `<button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍</button>`}
+          </div>
         </div>
       </div>
       ${a.auftragsbeschreibung ? `<div class="field"><label>Auftragsbeschreibung</label><p class="ro-value" style="white-space:pre-line">${escapeHtml(a.auftragsbeschreibung)}</p></div>` : ''}
-      <p class="hint">Diese Stammdaten kannst du im Adressbuch korrigieren, falls sie fehlerhaft sind. Ausnahmen: Koordinaten und Telefon kannst du auch hier direkt bearbeiten. Bearbeitbar sind außerdem Status, Notiz, Inbetriebnahme-Datum und Termin.</p>
 
       <div class="field-row">
         <div class="field">
@@ -2812,7 +2833,7 @@ function openAuftragEditModal(id){
         <textarea id="edit_kommentar" rows="3">${escapeHtml(a.kommentar||'')}</textarea>
       </div>
       <div class="field">
-        <label>Wiedervorlage (Rückruf-Erinnerung)</label>
+        <label>📞 Wiedervorlage</label>
         <div class="settings-row" style="margin-bottom:6px">
           <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 2)">+2 Tage</button>
           <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 7)">+1 Woche</button>
@@ -2824,15 +2845,14 @@ function openAuftragEditModal(id){
           <button class="icon-btn" onclick="saveWiedervorlageFromModal('${a.id}')" title="Speichern">✓</button>
           ${a.wiedervorlage ? `<button class="icon-btn" onclick="clearWiedervorlage('${a.id}')" title="Entfernen">🗑</button>` : ''}
         </div>
-        <p class="hint">Erscheint zu diesem Zeitpunkt zusammen mit den Terminen im Reiter „📅 Termine" — als Rückruf andersfarbig markiert.</p>
       </div>
       ${renderCustomFieldInputs(a)}
-      ${a.termin ? `<p class="hint">Termin: <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
+      ${a.termin ? `<p class="hint">📅 <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
       <div class="settings-row" style="margin-top:6px">
         <button class="btn small" onclick="navigateToAuftrag('${a.id}')">🧭 Navigation</button>
         <button class="btn small" onclick="openTerminModal('${a.id}')">📅 Termin</button>
         <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
-        <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Im Adressbuch öffnen</button>
+        <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Adressbuch</button>
       </div>
     </div>
     <div class="modal-foot">
