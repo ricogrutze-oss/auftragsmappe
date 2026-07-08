@@ -1,0 +1,3153 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auftragsmappe</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#143f3b">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Auftragsmappe">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<style>
+  :root{
+    --bg: #eef1f0;
+    --panel: #ffffff;
+    --ink: #16221f;
+    --ink-soft: #55635f;
+    --line: #d7ddda;
+    --line-soft: #e6eae8;
+    --teal: #1f5c56;
+    --teal-deep: #143f3b;
+    --amber: #b5790a;
+    --amber-bg: #fbeed4;
+    --blue: #2b5a8c;
+    --blue-bg: #dde7f2;
+    --purple: #6a4c8c;
+    --purple-bg: #e8e0f2;
+    --red: #a3392f;
+    --red-bg: #f5e0dd;
+    --green: #2c7a4b;
+    --green-bg: #dcefe1;
+    --orange: #b5540a;
+    --orange-bg: #fbe3d0;
+    --cyan: #106b78;
+    --cyan-bg: #d7eff2;
+    --gray-bg: #e7e9e8;
+    --font-display: 'IBM Plex Sans', sans-serif;
+    --font-body: 'Inter', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+  }
+  *{box-sizing:border-box;}
+  html{ overflow-x:hidden; width:100%; }
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    font-size:14px;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+    width:100%;
+  }
+  ::selection{ background:var(--teal); color:#fff; }
+
+  /* Header */
+  header.app-head{
+    background:var(--teal-deep);
+    color:#eef4f2;
+    padding:22px 28px 18px;
+    border-bottom:4px solid var(--teal);
+  }
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:#8fbdb2;
+    margin-bottom:4px;
+  }
+  .app-title{
+    font-family:var(--font-display);
+    font-size:24px;
+    font-weight:700;
+    letter-spacing:-.01em;
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+  }
+  .app-title .stamp{
+    font-family:var(--font-mono);
+    font-size:12px;
+    font-weight:500;
+    color:#9fcabf;
+    border:1px solid #3a6f68;
+    border-radius:3px;
+    padding:2px 7px;
+  }
+
+  /* Toolbar */
+  .toolbar{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex-wrap:wrap;
+    padding:14px 28px;
+    background:var(--panel);
+    border-bottom:1px solid var(--line);
+    position:sticky;
+    top:0;
+    z-index:20;
+  }
+  .btn{
+    font-family:var(--font-body);
+    font-size:13px;
+    font-weight:600;
+    padding:9px 16px;
+    border-radius:6px;
+    border:1px solid var(--line);
+    background:#fff;
+    color:var(--ink);
+    cursor:pointer;
+    transition:.12s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{ border-color:var(--teal); color:var(--teal-deep); }
+  .btn.primary{ background:var(--teal); border-color:var(--teal); color:#fff; }
+  .btn.primary:hover{ background:var(--teal-deep); }
+  .btn.ghost{ background:transparent; border-color:transparent; color:var(--ink-soft); }
+  .btn.ghost:hover{ color:var(--teal-deep); }
+  .btn.danger{ color:var(--red); border-color:var(--red-bg); }
+  .btn.danger:hover{ background:var(--red-bg); border-color:var(--red); }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .btn.small{ padding:5px 10px; font-size:12px; }
+  input[type=file]{ display:none; }
+  .spacer{ flex:1; }
+  .count-pill{
+    font-family:var(--font-mono);
+    font-size:12px;
+    background:var(--gray-bg);
+    padding:3px 9px;
+    border-radius:20px;
+    color:var(--ink-soft);
+  }
+
+  /* Tabs */
+  .tabs{
+    display:flex;
+    gap:2px;
+    padding:0 28px;
+    background:var(--panel);
+    border-bottom:1px solid var(--line);
+  }
+  .tab{
+    padding:12px 12px 11px;
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:19px;
+    color:var(--ink-soft);
+    cursor:pointer;
+    border-bottom:3px solid transparent;
+    display:flex;
+    align-items:center;
+    gap:4px;
+  }
+  .tab .n{
+    font-family:var(--font-mono);
+    font-size:11px;
+    background:var(--gray-bg);
+    padding:1px 7px;
+    border-radius:10px;
+  }
+  .tab.active{ color:var(--teal-deep); border-bottom-color:var(--teal); }
+  .tab.active .n{ background:var(--teal); color:#fff; }
+  .tab:hover:not(.active){ color:var(--ink); }
+
+  main{ padding:20px 28px 60px; max-width:1400px; margin:0 auto; }
+
+  .empty-state{
+    padding:70px 20px;
+    text-align:center;
+    color:var(--ink-soft);
+  }
+  .empty-state .big{
+    font-family:var(--font-display);
+    font-size:17px;
+    color:var(--ink);
+    margin-bottom:6px;
+    font-weight:600;
+  }
+
+  /* Table */
+  .grid-wrap{ background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  table{ width:100%; border-collapse:collapse; }
+  thead th{
+    text-align:left;
+    font-family:var(--font-mono);
+    font-size:10.5px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    padding:11px 12px;
+    background:#f6f8f7;
+    border-bottom:1px solid var(--line);
+    white-space:nowrap;
+  }
+  tbody td{
+    padding:10px 12px;
+    border-bottom:1px solid var(--line-soft);
+    vertical-align:middle;
+  }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr:hover{ background:#fafcfb; }
+  .code{ font-family:var(--font-mono); font-size:12.5px; color:var(--teal-deep); font-weight:600; }
+  .code-sm{ font-family:var(--font-mono); font-size:11px; color:var(--ink-soft); font-weight:500; letter-spacing:.01em; }
+  .ro-value{ font-size:13px; color:var(--ink); line-height:1.4; }
+  .ro-info-grid{
+    display:grid; grid-template-columns:1fr 1fr; gap:10px 16px;
+    margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--line-soft);
+  }
+  .ro-info-item{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .ro-info-label{ font-family:var(--font-mono); font-size:13px; letter-spacing:.02em; color:var(--ink-soft); }
+  .ro-info-val{ font-size:13.5px; color:var(--ink); word-break:break-word; }
+  .custom-field-list{ display:flex; flex-direction:column; gap:4px; margin-bottom:4px; }
+  .custom-field-row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:6px 10px; background:#f6f8f7; border-radius:6px; font-size:13px;
+  }
+  .muted{ color:var(--ink-soft); }
+  .cell-input{
+    width:100%;
+    border:1px solid transparent;
+    background:transparent;
+    font-family:var(--font-body);
+    font-size:13px;
+    padding:5px 7px;
+    border-radius:5px;
+    color:var(--ink);
+  }
+  .cell-input:hover{ border-color:var(--line); }
+  .cell-input:focus{ outline:none; border-color:var(--teal); background:#fff; }
+  textarea.cell-input{ resize:vertical; min-height:34px; font-family:var(--font-body); }
+
+  select.status-select{
+    font-family:var(--font-body);
+    font-size:12.5px;
+    font-weight:600;
+    border:none;
+    border-radius:20px;
+    padding:6px 26px 6px 12px;
+    cursor:pointer;
+    appearance:none;
+    -webkit-appearance:none;
+    background-repeat:no-repeat;
+    background-position:right 9px center;
+    background-size:9px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M0 0l5 6 5-6z' fill='%23555'/></svg>");
+  }
+  .st-offen{ background:var(--gray-bg); color:#3d4744; }
+  .st-ohne_termin{ background:var(--blue-bg); color:#4a6b8a; }
+  .st-in_bearbeitung{ background:var(--amber-bg); color:var(--amber); }
+  .st-termin_vereinbart{ background:var(--blue-bg); color:var(--blue); }
+  .st-kunde_rueckmeldung{ background:var(--purple-bg); color:var(--purple); }
+  .st-anlage_nicht_fertig{ background:var(--red-bg); color:var(--red); }
+  .st-warte_planung{ background:var(--orange-bg); color:var(--orange); }
+  .st-inbetriebnahme_erfolgt{ background:var(--cyan-bg); color:var(--cyan); }
+  .st-erledigt{ background:var(--green-bg); color:var(--green); }
+
+  .termin-chip{
+    font-family:var(--font-mono);
+    font-size:12px;
+    color:var(--blue);
+    background:var(--blue-bg);
+    padding:4px 9px;
+    border-radius:5px;
+    white-space:nowrap;
+  }
+  .row-actions{ display:flex; gap:6px; }
+  .icon-btn{
+    border:1px solid var(--line);
+    background:#fff;
+    border-radius:6px;
+    padding:6px 9px;
+    font-size:12px;
+    cursor:pointer;
+    color:var(--ink-soft);
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .icon-btn:hover{ border-color:var(--teal); color:var(--teal-deep); }
+
+  /* Modal */
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(15,26,24,.55);
+    display:flex; align-items:center; justify-content:center;
+    z-index:9999; padding:16px;
+  }
+  .modal{
+    background:#fff; border-radius:12px; width:100%; max-width:520px;
+    max-height:90vh; overflow-y:auto; overflow-x:hidden;
+    box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .modal-head{
+    padding:18px 22px 14px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .modal-head h3{ margin:0; font-family:var(--font-display); font-size:16px; }
+  .modal-body{ padding:20px 22px; }
+  .modal-foot{ padding:14px 22px 20px; display:flex; gap:10px; justify-content:flex-end; border-top:1px solid var(--line-soft); }
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:12px; font-weight:600; color:var(--ink-soft); margin-bottom:5px; }
+  .field input, .field select, .field textarea{
+    width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:6px;
+    font-family:var(--font-body); font-size:13.5px; color:var(--ink);
+  }
+  .field input:focus, .field select:focus, .field textarea:focus{ outline:none; border-color:var(--teal); }
+  .field-row{ display:flex; gap:12px; }
+  .field-row .field{ flex:1; }
+  .hint{ font-size:12px; color:var(--ink-soft); margin-top:4px; line-height:1.5; }
+  .close-x{ background:none; border:none; font-size:18px; cursor:pointer; color:var(--ink-soft); }
+
+  .mapping-row{ display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .mapping-row label{ width:150px; font-size:13px; font-weight:600; flex-shrink:0; }
+  .mapping-row select{ flex:1; padding:8px 10px; border:1px solid var(--line); border-radius:6px; font-size:13px; }
+  .req-star{ color:var(--red); }
+
+  .history-list{ list-style:none; padding:0; margin:0; }
+  .history-list li{
+    padding:8px 0; border-bottom:1px solid var(--line-soft); font-size:12.5px;
+  }
+  .history-list li:last-child{ border-bottom:none; }
+  .history-list .ts{ font-family:var(--font-mono); color:var(--ink-soft); font-size:11px; }
+
+  .toast{
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:var(--teal-deep); color:#fff; padding:11px 20px; border-radius:8px;
+    font-size:13px; font-weight:500; z-index:200; box-shadow:0 8px 24px rgba(0,0,0,.25);
+    display:none;
+  }
+
+  .view-toggle{ display:flex; gap:6px; margin-bottom:14px; align-items:center; }
+  .filter-bar{
+    display:flex; gap:8px; flex-wrap:wrap; align-items:center;
+    margin-bottom:12px; padding:12px; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px;
+  }
+  .filter-search{
+    flex:1; min-width:180px; padding:8px 12px; border:1px solid var(--line);
+    border-radius:20px; font-family:var(--font-body); font-size:13px;
+  }
+  .filter-search:focus{ outline:none; border-color:var(--teal); }
+  .filter-select{
+    padding:8px 12px; border:1px solid var(--line); border-radius:20px;
+    font-family:var(--font-body); font-size:12.5px; background:#fff; color:var(--ink);
+  }
+  .agenda-group{ margin-bottom:18px; }
+  .agenda-date-header{
+    font-family:var(--font-display); font-weight:700; font-size:14px;
+    color:var(--teal-deep); padding:8px 14px; background:#f6f8f7;
+    border-bottom:1px solid var(--line);
+  }
+  .agenda-date-header.is-today{ color:var(--teal); background:var(--green-bg); }
+  .agenda-date-header.is-past{ color:var(--ink-soft); }
+  .agenda-item{
+    display:flex; align-items:center; gap:14px; padding:12px 14px;
+    border-bottom:1px solid var(--line-soft); cursor:pointer;
+  }
+  .agenda-item:hover{ background:#fafcfb; }
+  .agenda-item:last-child{ border-bottom:none; }
+  .agenda-time{
+    font-family:var(--font-mono); font-weight:600; font-size:13px;
+    color:var(--blue); min-width:48px;
+  }
+  .agenda-main{ flex:1; min-width:0; }
+  .agenda-title{ font-size:13.5px; font-weight:600; }
+  .agenda-sub{ font-size:12.5px; color:var(--ink-soft); margin-top:2px; }
+  .stat-summary{ display:flex; flex-wrap:wrap; gap:12px; }
+  .stat-tile{
+    flex:1 1 110px; background:#f6f8f7; border-radius:8px; padding:14px 12px; text-align:center;
+  }
+  .stat-tile-num{ font-family:var(--font-display); font-size:24px; font-weight:700; color:var(--teal-deep); }
+  .stat-tile-label{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .stat-row{ display:flex; align-items:center; gap:10px; padding:7px 0; }
+  .stat-label{ font-size:12.5px; width:150px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .stat-bar-track{ flex:1; height:14px; background:var(--gray-bg); border-radius:8px; overflow:hidden; }
+  .stat-bar-fill{ height:100%; border-radius:8px; background:var(--teal); }
+  .stat-count{ font-family:var(--font-mono); font-size:12px; color:var(--ink-soft); width:28px; text-align:right; flex-shrink:0; }
+  .fab-scan{
+    position:fixed; bottom:22px; right:18px; width:56px; height:56px; border-radius:50%;
+    background:var(--teal); color:#fff; border:none; font-size:22px; box-shadow:0 6px 18px rgba(0,0,0,.25);
+    cursor:pointer; z-index:500;
+  }
+  .fab-scan:hover{ background:var(--teal-deep); }
+  .selection-bar{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:10px 14px; background:var(--teal-deep); color:#fff; border-radius:10px; margin-bottom:12px;
+  }
+  .selection-bar .btn{ background:#fff; }
+  .adr-card-list{ display:flex; flex-direction:column; gap:10px; }
+  .adr-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:14px 16px; display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap;
+    max-width:100%; box-sizing:border-box;
+  }
+  .adr-card-main{ flex:1 1 160px; min-width:0; display:flex; flex-direction:column; gap:4px; }
+  .adr-name-input, .adr-addr-input, .adr-phone-input{ width:100%; max-width:100%; box-sizing:border-box; }
+  .adr-name-input{
+    border:none; background:transparent; font-family:var(--font-display); font-weight:700;
+    font-size:15.5px; color:var(--ink); padding:2px 4px; border-radius:5px;
+  }
+  .adr-name-input:hover, .adr-addr-input:hover, .adr-phone-input:hover{ background:var(--gray-bg); }
+  .adr-name-input:focus, .adr-addr-input:focus, .adr-phone-input:focus{ outline:none; background:#fff; border:1px solid var(--teal); }
+  .adr-addr-input{
+    border:none; background:transparent; font-family:var(--font-body); font-size:13.5px;
+    color:var(--ink); padding:2px 4px; border-radius:5px;
+  }
+  .adr-phone-input{
+    border:none; background:transparent; font-family:var(--font-mono); font-size:12.5px;
+    color:var(--ink-soft); padding:2px 4px; border-radius:5px;
+  }
+  .adr-card-actions{ display:flex; gap:6px; flex-shrink:0; }
+  .adr-card-details{
+    width:100%; margin-top:8px; padding-top:12px; border-top:1px solid var(--line-soft);
+    box-sizing:border-box;
+  }
+  .view-toggle .btn.active{ background:var(--teal); border-color:var(--teal); color:#fff; }
+  .settings-section{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:18px 20px; margin-bottom:16px;
+  }
+  .settings-section h4{
+    margin:0 0 12px; font-family:var(--font-display); font-size:14px; color:var(--teal-deep);
+  }
+  .settings-row{ display:flex; gap:10px; flex-wrap:wrap; }
+  .map-empty{ height:200px; display:flex; align-items:center; justify-content:center; color:var(--ink-soft); background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+  .leaflet-popup-content{ font-family:var(--font-body); font-size:12.5px; min-width:180px; }
+  .leaflet-popup-content .pop-code{ font-family:var(--font-mono); font-weight:700; color:var(--teal-deep); }
+  .leaflet-popup-content .pop-status{ display:inline-block; margin-top:4px; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px; }
+  .col-picker label{ display:flex; align-items:center; gap:8px; padding:7px 0; font-size:13.5px; font-weight:500; border-bottom:1px solid var(--line-soft); }
+  .col-picker label:last-child{ border-bottom:none; }
+  .col-picker input{ width:16px; height:16px; }
+  .col-picker-row{
+    display:flex; align-items:center; gap:10px; padding:7px 0;
+    border-bottom:1px solid var(--line-soft);
+  }
+  .col-picker-row:last-child{ border-bottom:none; }
+  .col-picker-move{ display:flex; flex-direction:column; gap:2px; }
+  .col-picker-move .icon-btn{ padding:2px 7px; font-size:10px; line-height:1; }
+
+  @media (max-width:800px){
+    header.app-head, .toolbar, .tabs, main{ padding-left:14px; padding-right:14px; }
+    .mapping-row{ flex-wrap:wrap; }
+    .mapping-row label{ width:100%; }
+    table, thead, tbody, th, td, tr{ display:block; }
+    thead{ display:none; }
+    tbody tr{ border-bottom:6px solid var(--bg); padding:10px 0; }
+    tbody td{ border-bottom:none; padding:6px 12px; display:flex; justify-content:space-between; gap:10px; align-items:center; }
+    tbody td::before{ content: attr(data-label); font-family:var(--font-mono); font-size:10px; text-transform:uppercase; color:var(--ink-soft); flex-shrink:0; }
+    .modal-backdrop{ padding:0; align-items:flex-end; }
+    .modal{ max-width:100%; max-height:92vh; border-radius:16px 16px 0 0; }
+    .field-row{ flex-wrap:wrap; }
+    .ro-info-grid{ grid-template-columns:1fr; }
+    .adr-card{ flex-direction:column; align-items:stretch; }
+    .adr-card-actions{ justify-content:flex-end; }
+    .filter-bar{ flex-direction:column; align-items:stretch; }
+    .filter-search{ min-width:0; width:100%; }
+    .filter-bar .btn{ width:100%; }
+    .settings-row{ width:100%; }
+    .settings-row .btn{ flex:1 1 auto; }
+    .new-field-input{ width:100%; min-width:0 !important; }
+    .app-title{ flex-wrap:wrap; }
+    .app-title .stamp{ max-width:100%; overflow-wrap:break-word; white-space:normal; }
+    .custom-field-row{ flex-wrap:wrap; }
+  }
+</style>
+</head>
+<body>
+
+<header class="app-head">
+  <div class="eyebrow">Kundenvorgänge · Adressbuch · Termine</div>
+  <div class="app-title">Auftragsmappe <span class="stamp" id="orgEmailStamp">Absender nicht gesetzt</span></div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="offen" onclick="switchTab('offen')" title="Offene Aufträge">📋 <span class="n" id="tabCountOffen">0</span></div>
+  <div class="tab" data-tab="erledigt" onclick="switchTab('erledigt')" title="Erledigte Aufträge">✅ <span class="n" id="tabCountErledigt">0</span></div>
+  <div class="tab" data-tab="termine" onclick="switchTab('termine')" title="Termine">📅 <span class="n" id="tabCountTermine">0</span><span class="n" id="tabCountCallback" style="display:none;background:var(--red);color:#fff"></span></div>
+  <div class="tab" data-tab="adressbuch" onclick="switchTab('adressbuch')" title="Adressbuch">📇 <span class="n" id="tabCountAdr">0</span></div>
+  <div class="tab" data-tab="statistik" onclick="switchTab('statistik')" title="Statistik">📊</div>
+  <div class="tab" data-tab="einstellungen" onclick="switchTab('einstellungen')" title="Einstellungen">⚙️<span class="n" id="tabWarnBackup" style="display:none;background:var(--red);color:#fff">!</span></div>
+</div>
+
+<main>
+  <div id="view-offen"></div>
+  <div id="view-erledigt" style="display:none"></div>
+  <div id="view-termine" style="display:none"></div>
+  <div id="view-adressbuch" style="display:none"></div>
+  <div id="view-statistik" style="display:none"></div>
+  <div id="view-einstellungen" style="display:none"></div>
+</main>
+
+<input type="file" id="csvInput" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" style="display:none">
+<input type="file" id="backupInput" accept=".json" style="display:none">
+<input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+
+<button class="fab-scan" onclick="openScanner()" title="Zähler scannen">📷</button>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------------------------------------------------------------
+   State
+--------------------------------------------------------------- */
+const STATUS = {
+  offen:              { label: 'Offen', cls: 'st-offen' },
+  ohne_termin:        { label: 'Ohne Termin (Station/Zähleranschlusssäule)', cls: 'st-ohne_termin' },
+  in_bearbeitung:     { label: 'In Bearbeitung', cls: 'st-in_bearbeitung' },
+  termin_vereinbart:  { label: 'Termin vereinbart', cls: 'st-termin_vereinbart' },
+  kunde_rueckmeldung: { label: 'Kunde meldet sich zurück', cls: 'st-kunde_rueckmeldung' },
+  anlage_nicht_fertig:{ label: 'Anlage noch nicht fertig', cls: 'st-anlage_nicht_fertig' },
+  warte_planung:      { label: 'Warte auf Terminvergabe (Planung)', cls: 'st-warte_planung' },
+  inbetriebnahme_erfolgt: { label: 'Inbetriebnahme erfolgt', cls: 'st-inbetriebnahme_erfolgt' },
+  erledigt:           { label: 'Erledigt', cls: 'st-erledigt' },
+};
+
+let auftraege = [];   // array of Auftrag objects
+let adressbuch = [];  // array of Adressbuch entries
+let settings = { organizerEmail: '', lastImport: null };
+let columnMapping = null; // { kundencode, vorgang, telefonnummer, adresse, zaehlerplatzId, koordinaten }
+let currentTab = 'offen';
+let pendingCsvRows = null; // rows waiting on mapping confirmation
+let pendingCsvHeaders = null;
+let terminModalAuftragId = null;
+let historyModalTarget = null;
+let viewMode = { offen: 'liste', erledigt: 'liste', adressbuch: 'liste' };
+let selection = { offen: new Set(), erledigt: new Set() };
+let mapInstances = {};
+const DEFAULT_VISIBLE_COLUMNS = {
+  kundenname: true, vorgang: true, auftragsbeschreibung: true, status: true, telefonnummer: true, email: true, adresse: true,
+  standort: true, zaehler: true, bauform: true,
+  kommentar: true, termin: true, inbetriebnahmeDatum: true, koordinaten: true
+};
+const COLUMN_DEFS = [
+  { key:'kundenname', label:'Kundenname' },
+  { key:'vorgang', label:'Vorgang' },
+  { key:'auftragsbeschreibung', label:'Auftragsbeschreibung' },
+  { key:'status', label:'Status' },
+  { key:'telefonnummer', label:'Telefon' },
+  { key:'email', label:'E-Mail' },
+  { key:'adresse', label:'Adresse' },
+  { key:'standort', label:'Standort' },
+  { key:'zaehler', label:'Zähler' },
+  { key:'bauform', label:'Bauform Zähler' },
+  { key:'kommentar', label:'Kommentar' },
+  { key:'termin', label:'Termin' },
+  { key:'inbetriebnahmeDatum', label:'Inbetriebnahme am' },
+  { key:'koordinaten', label:'Koordinaten' },
+];
+const DEFAULT_COLUMN_ORDER = COLUMN_DEFS.map(c => c.key);
+
+function uid(){ return 'a_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function nowIso(){ return new Date().toISOString(); }
+function fmtTs(iso){
+  const d = new Date(iso);
+  return d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit'});
+}
+function fmtDateDe(isoDate){
+  if(!isoDate) return '';
+  const [y,m,d] = isoDate.split('-');
+  return `${d}.${m}.${y}`;
+}
+function norm(s){ return (s||'').toString().trim().toLowerCase(); }
+function parseCoords(str){
+  if(!str) return null;
+  const parts = str.toString().split(/[,;\s]+/).map(p=>p.trim()).filter(Boolean);
+  if(parts.length < 2) return null;
+  const lat = parseFloat(parts[0].replace(',','.'));
+  const lon = parseFloat(parts[1].replace(',','.'));
+  if(isNaN(lat) || isNaN(lon)) return null;
+  if(lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+function fmtCoords(c){ return c ? `${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}` : ''; }
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(()=>{ t.style.display='none'; }, 3200);
+}
+
+/* ---------------------------------------------------------------
+   Storage — works both as a Claude artifact (window.storage) and as
+   a standalone hosted app (localStorage + optional linked folder)
+--------------------------------------------------------------- */
+const hasClaudeStorage = (typeof window.storage !== 'undefined');
+const FS_SUPPORTED = ('showDirectoryPicker' in window);
+let folderHandle = null;
+let folderNeedsPermission = false;
+let folderSyncTimer = null;
+
+async function kvGet(key){
+  if(hasClaudeStorage){
+    try{ const r = await window.storage.get(key); return r ? r.value : null; }
+    catch(e){ return null; }
+  }
+  try{ return localStorage.getItem('am_' + key); }catch(e){ return null; }
+}
+async function kvSet(key, val){
+  if(hasClaudeStorage){
+    try{ await window.storage.set(key, val); return; }
+    catch(e){ showToast('Speichern fehlgeschlagen: ' + key); return; }
+  }
+  try{ localStorage.setItem('am_' + key, val); }catch(e){ showToast('Speichern fehlgeschlagen: ' + key); }
+}
+
+/* ---------------------------------------------------------------
+   Foto-Anhang pro Auftrag (eigener Storage-Key pro Auftrag,
+   damit der Haupt-Datensatz klein bleibt)
+--------------------------------------------------------------- */
+let photoTargetAuftragId = null;
+
+function compressImageFile(file){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = (e) => { img.src = e.target.result; };
+    reader.onerror = reject;
+    img.onload = () => {
+      const maxW = 1000;
+      const scale = Math.min(1, maxW / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.72));
+    };
+    img.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function triggerPhotoCapture(auftragId){
+  photoTargetAuftragId = auftragId;
+  document.getElementById('photoInput').click();
+}
+
+document.getElementById('photoInput').addEventListener('change', async function(e){
+  const file = e.target.files[0];
+  e.target.value = '';
+  if(!file || !photoTargetAuftragId) return;
+  try{
+    const dataUrl = await compressImageFile(file);
+    await kvSet('photo_' + photoTargetAuftragId, dataUrl);
+    showToast('Foto gespeichert');
+    refreshPhotoArea(photoTargetAuftragId);
+  }catch(err){
+    showToast('Foto konnte nicht verarbeitet werden');
+  }
+});
+
+async function refreshPhotoArea(auftragId){
+  const area = document.getElementById('photoArea');
+  if(!area) return; // modal already closed
+  const dataUrl = await kvGet('photo_' + auftragId);
+  area.innerHTML = photoAreaHtml(auftragId, dataUrl);
+}
+
+function photoAreaHtml(auftragId, dataUrl){
+  if(dataUrl){
+    return `
+      <img src="${dataUrl}" style="width:100%;border-radius:8px;display:block;margin-bottom:8px;cursor:pointer" onclick="openPhotoFull('${auftragId}')">
+      <div class="settings-row">
+        <button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 Foto ersetzen</button>
+        <button class="btn small danger" onclick="deletePhoto('${auftragId}')">🗑 Foto löschen</button>
+      </div>`;
+  }
+  return `<button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 Foto aufnehmen</button>`;
+}
+
+async function openPhotoFull(auftragId){
+  const dataUrl = await kvGet('photo_' + auftragId);
+  if(dataUrl){ window.open(dataUrl, '_blank'); }
+}
+
+async function deletePhoto(auftragId){
+  await kvSet('photo_' + auftragId, '');
+  showToast('Foto gelöscht');
+  refreshPhotoArea(auftragId);
+}
+
+async function loadAll(){
+  try{ const v = await kvGet('auftraege'); auftraege = v ? JSON.parse(v) : []; }catch(e){ auftraege = []; }
+  // migrate old string-only Wiedervorlage format ("2026-07-10") to {datum, zeit}
+  let migratedWiedervorlage = false;
+  auftraege.forEach(a => {
+    if(a.wiedervorlage && typeof a.wiedervorlage === 'string'){
+      a.wiedervorlage = { datum: a.wiedervorlage, zeit: '09:00' };
+      migratedWiedervorlage = true;
+    }
+  });
+  if(migratedWiedervorlage) saveAuftraege();
+  try{ const v = await kvGet('adressbuch'); adressbuch = v ? JSON.parse(v) : []; }catch(e){ adressbuch = []; }
+  try{ const v = await kvGet('settings'); settings = v ? JSON.parse(v) : { organizerEmail:'', lastImport:null }; }
+  catch(e){ settings = { organizerEmail:'', lastImport:null }; }
+  if(!settings.visibleColumns){ settings.visibleColumns = Object.assign({}, DEFAULT_VISIBLE_COLUMNS); }
+  // fill in any newly introduced columns for users with an older saved settings object
+  DEFAULT_COLUMN_ORDER.forEach(k => { if(!(k in settings.visibleColumns)) settings.visibleColumns[k] = true; });
+  if(!settings.columnOrder){ settings.columnOrder = DEFAULT_COLUMN_ORDER.slice(); }
+  if(!settings.customFields){ settings.customFields = []; }
+  // include any new columns that aren't in a saved order yet (appended at the end)
+  DEFAULT_COLUMN_ORDER.forEach(k => { if(!settings.columnOrder.includes(k)) settings.columnOrder.push(k); });
+  try{ const v = await kvGet('column-mapping'); columnMapping = v ? JSON.parse(v) : null; }catch(e){ columnMapping = null; }
+}
+async function persist(key, val){
+  await kvSet(key, JSON.stringify(val));
+}
+const saveAuftraege  = () => { persist('auftraege', auftraege); scheduleFolderSync(); };
+const saveAdressbuch = () => { persist('adressbuch', adressbuch); scheduleFolderSync(); };
+const saveSettings   = () => { persist('settings', settings); scheduleFolderSync(); };
+const saveMapping    = () => { persist('column-mapping', columnMapping); scheduleFolderSync(); };
+
+/* --- Linked file (Desktop Chrome/Edge only) ------------------------
+   Stores a FileSystemFileHandle in IndexedDB so the permission
+   can be silently reused across page reloads (where the browser allows).
+   Uses the file-picker (not the folder-picker) since that's the dialog
+   that reliably shows OneDrive/SharePoint locations. */
+function idbHandleDb(){
+  return new Promise((resolve,reject) => {
+    const req = indexedDB.open('auftragsmappe-fs', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('handles');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbGetHandle(){
+  try{
+    const db = await idbHandleDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction('handles','readonly');
+      const r = tx.objectStore('handles').get('file');
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => resolve(null);
+    });
+  }catch(e){ return null; }
+}
+async function idbSetHandle(handle){
+  try{
+    const db = await idbHandleDb();
+    await new Promise((resolve) => {
+      const tx = db.transaction('handles','readwrite');
+      tx.objectStore('handles').put(handle, 'file');
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  }catch(e){}
+}
+
+async function chooseFolder(){
+  if(!FS_SUPPORTED){
+    showToast('Datei-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
+    return;
+  }
+  try{
+    let handle;
+    // Prefer picking an existing file (e.g. one already created by another device)
+    // so multiple devices can converge on the very same file.
+    try{
+      const [picked] = await window.showOpenFilePicker({
+        types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }],
+        excludeAcceptAllOption: false,
+        multiple: false
+      });
+      handle = picked;
+    }catch(openErr){
+      // user might prefer to create a new file instead — offer Save picker as fallback
+      handle = await window.showSaveFilePicker({
+        suggestedName: 'auftragsmappe-daten.json',
+        types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }]
+      });
+    }
+    folderHandle = handle;
+    folderNeedsPermission = false;
+    await idbSetHandle(handle);
+    await loadFromFolder(true);
+    await saveToFolder();
+    render();
+    showToast('Datei verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
+  }catch(e){ /* user cancelled the picker */ }
+}
+async function reconnectFolder(){
+  if(!folderHandle) return;
+  try{
+    const perm = await folderHandle.requestPermission({ mode:'readwrite' });
+    if(perm === 'granted'){
+      folderNeedsPermission = false;
+      await loadFromFolder(true);
+      render();
+      showToast('Datei wieder verbunden');
+    } else {
+      showToast('Zugriff wurde nicht erlaubt');
+    }
+  }catch(e){ showToast('Verbindung zur Datei fehlgeschlagen'); }
+}
+async function tryRestoreFolder(){
+  if(!FS_SUPPORTED) return;
+  const handle = await idbGetHandle();
+  if(!handle) return;
+  folderHandle = handle;
+  try{
+    const perm = await handle.queryPermission({ mode:'readwrite' });
+    if(perm === 'granted'){
+      folderNeedsPermission = false;
+      await loadFromFolder(true);
+    } else {
+      folderNeedsPermission = true; // needs a click (user gesture) to reconnect
+    }
+  }catch(e){ folderNeedsPermission = true; }
+}
+async function loadFromFolder(silent){
+  if(!folderHandle) return;
+  try{
+    const file = await folderHandle.getFile();
+    const text = await file.text();
+    if(!text || !text.trim()) return;
+    const data = JSON.parse(text);
+    if(data.kind === 'auftragsmappe-sicherung'){
+      mergeBackup(data, silent);
+    }
+  }catch(e){ console.error('loadFromFolder', e); }
+}
+async function saveToFolder(){
+  if(!folderHandle) return;
+  try{
+    const payload = { kind:'auftragsmappe-sicherung', version:1, exportedAt: nowIso(), auftraege, adressbuch, settings, columnMapping };
+    const writable = await folderHandle.createWritable();
+    await writable.write(JSON.stringify(payload, null, 2));
+    await writable.close();
+    settings.folderLastSync = nowIso();
+  }catch(e){ console.error('saveToFolder', e); }
+}
+function scheduleFolderSync(){
+  if(!folderHandle || folderNeedsPermission) return;
+  clearTimeout(folderSyncTimer);
+  folderSyncTimer = setTimeout(saveToFolder, 1200);
+}
+
+/* ---------------------------------------------------------------
+   Address book helpers
+--------------------------------------------------------------- */
+function findAdrEntry(zaehlerplatzId, kundencode, adresse, zaehler){
+  // Kundencode is the reliable, unique-per-location identifier in this data.
+  // When a Zähler(-nummer) is also present, match on the combination — that's
+  // more precise. Rows without a Zähler are typically Neuanlagen (new
+  // installations, no meter assigned yet), so those match on Kundencode alone.
+  if(kundencode && zaehler){
+    const hit = adressbuch.find(a => a.kundencode && a.zaehler
+      && norm(a.kundencode) === norm(kundencode) && norm(a.zaehler) === norm(zaehler));
+    if(hit) return hit;
+  }
+  if(kundencode){
+    const hit = adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
+    if(hit) return hit;
+  }
+  if(zaehlerplatzId){
+    const hit = adressbuch.find(a => a.zaehlerplatzId && norm(a.zaehlerplatzId) === norm(zaehlerplatzId));
+    if(hit) return hit;
+  }
+  return null;
+}
+function upsertAdrFromImport(row){
+  let entry = findAdrEntry(row.zaehlerplatzId, row.kundencode, row.adresse, row.zaehler);
+  if(!entry){
+    entry = {
+      id: uid(),
+      kundencode: row.kundencode || '',
+      zaehlerplatzId: row.zaehlerplatzId || '',
+      kundenname: row.kundenname || '',
+      adresse: row.adresse || '',
+      telefonnummer: row.telefonnummer || '',
+      email: row.email || '',
+      koordinaten: row.koordinaten || null,
+      zaehler: row.zaehler || '',
+      bauform: row.bauform || '',
+      standort: row.standort || '',
+      history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus Datei-Import' }]
+    };
+    adressbuch.push(entry);
+  } else {
+    // Fill only empty fields, never overwrite manual edits
+    if(!entry.adresse && row.adresse) entry.adresse = row.adresse;
+    if(!entry.telefonnummer && row.telefonnummer) entry.telefonnummer = row.telefonnummer;
+    if(!entry.email && row.email) entry.email = row.email;
+    if(!entry.koordinaten && row.koordinaten) entry.koordinaten = row.koordinaten;
+    if(!entry.kundenname && row.kundenname) entry.kundenname = row.kundenname;
+    if(!entry.zaehler && row.zaehler) entry.zaehler = row.zaehler;
+    if(!entry.bauform && row.bauform) entry.bauform = row.bauform;
+    if(!entry.standort && row.standort) entry.standort = row.standort;
+  }
+  return entry;
+}
+function updateAuftragCoords(id, value){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  const oldStr = fmtCoords(a.koordinaten);
+  if(!value.trim()){
+    if(!a.koordinaten) return;
+    a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: '' });
+    a.koordinaten = null;
+    saveAuftraege();
+    if(a.adrEntryId) updateAdrCoords(a.adrEntryId, null);
+    render();
+    return;
+  }
+  const parsed = parseCoords(value);
+  if(!parsed){
+    showToast('Ungültiges Koordinatenformat, z.B. 52.130, 11.630');
+    render();
+    return;
+  }
+  a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: fmtCoords(parsed) });
+  a.koordinaten = parsed;
+  saveAuftraege();
+  if(a.adrEntryId) updateAdrCoords(a.adrEntryId, parsed);
+  showToast('Gespeichert');
+}
+function updateAdrCoords(entryId, coords){
+  const entry = adressbuch.find(a => a.id === entryId);
+  if(!entry) return;
+  const oldStr = fmtCoords(entry.koordinaten);
+  const newStr = fmtCoords(coords);
+  if(oldStr === newStr) return;
+  entry.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: newStr });
+  entry.koordinaten = coords;
+  saveAdressbuch();
+
+  const linked = auftraege.filter(a => a.adrEntryId === entryId);
+  if(linked.length){
+    linked.forEach(a => {
+      a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: newStr });
+      a.koordinaten = coords;
+    });
+    saveAuftraege();
+  }
+}
+function updateAdrField(entryId, field, newVal){
+  const entry = adressbuch.find(a => a.id === entryId);
+  if(!entry) return;
+  const oldVal = entry[field] || '';
+  if(oldVal === newVal) return;
+  entry.history.push({ ts: nowIso(), field, old: oldVal, new: newVal });
+  entry[field] = newVal;
+  saveAdressbuch();
+
+  // push master-data corrections down into any linked Aufträge (read-only there)
+  const linked = auftraege.filter(a => a.adrEntryId === entryId);
+  if(linked.length){
+    linked.forEach(a => {
+      if(field in a){
+        a.history.push({ ts: nowIso(), field, old: a[field]||'', new: newVal });
+        a[field] = newVal;
+      }
+    });
+    saveAuftraege();
+  }
+}
+
+/* ---------------------------------------------------------------
+   File Import (CSV/TSV via PapaParse, Excel/ODS via SheetJS)
+--------------------------------------------------------------- */
+document.getElementById('csvInput').addEventListener('change', function(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+
+  function proceed(rows, headers, sheetInfo){
+    if(!rows || rows.length === 0){
+      showToast('Keine Zeilen in der Datei gefunden');
+      return;
+    }
+    pendingCsvRows = rows;
+    pendingCsvHeaders = headers;
+    if(sheetInfo) showToast(sheetInfo);
+    if(!columnMapping || !mappingMatchesHeaders(pendingCsvHeaders)){
+      openMappingModal(false);
+    } else {
+      runImport();
+    }
+  }
+
+  if(ext === 'csv' || ext === 'tsv' || ext === 'txt'){
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: function(results){
+        proceed(results.data, results.meta.fields || []);
+      },
+      error: function(err){ showToast('Datei konnte nicht gelesen werden'); }
+    });
+  } else if(ext === 'xlsx' || ext === 'xls' || ext === 'ods') {
+    const reader = new FileReader();
+    reader.onload = function(evt){
+      try{
+        const data = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(data, { type: 'array' });
+        const sheetName = wb.SheetNames[0];
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
+        const headers = rows.length ? Object.keys(rows[0]) : (XLSX.utils.sheet_to_json(sheet, { header:1 })[0] || []);
+        const info = wb.SheetNames.length > 1
+          ? `Tabellenblatt "${sheetName}" verwendet (von ${wb.SheetNames.length} Blättern)`
+          : null;
+        proceed(rows, headers, info);
+      }catch(err){
+        showToast('Excel-Datei konnte nicht gelesen werden');
+      }
+    };
+    reader.onerror = function(){ showToast('Datei konnte nicht gelesen werden'); };
+    reader.readAsArrayBuffer(file);
+  } else {
+    showToast('Nicht unterstütztes Dateiformat: .' + ext);
+  }
+  e.target.value = '';
+});
+
+function mappingMatchesHeaders(headers){
+  if(!columnMapping) return false;
+  const req = ['kundencode','vorgang'];
+  return req.every(k => headers.includes(columnMapping[k]));
+}
+
+function openMappingModal(manual){
+  const headers = pendingCsvHeaders || (columnMapping ? Object.values(columnMapping).filter(v => typeof v === 'string' && v) : []);
+  const basicFields = [
+    { key:'kundencode', label:'Kundencode', required:true },
+    { key:'vorgang', label:'Vorgang', required:true },
+    { key:'auftragsbeschreibung', label:'Auftragsbeschreibung', required:false },
+    { key:'telefonnummer', label:'Telefonnummer', required:false },
+    { key:'email', label:'E-Mail', required:false },
+    { key:'zaehlerplatzId', label:'Zählerplatz-ID', required:false },
+  ];
+  const kundeFields = [
+    { key:'kundenname', label:'Kundenname (eine Spalte)' },
+    { key:'vorname', label:'Vorname' },
+    { key:'nachname', label:'Nachname' },
+  ];
+  const addressFields = [
+    { key:'adresse', label:'Adresse (eine Spalte)' },
+    { key:'strasse', label:'Straße' },
+    { key:'hausnummer', label:'Hausnummer' },
+    { key:'hausnummerzusatz', label:'Hausnummerzusatz' },
+    { key:'ortsteil', label:'Ortsteil' },
+    { key:'ort', label:'Ort' },
+  ];
+  const zaehlerFields = [
+    { key:'zaehler', label:'Zähler(-nummer)' },
+    { key:'bauform', label:'Bauform Zähler' },
+    { key:'standort', label:'Standort' },
+  ];
+  const coordFields = [
+    { key:'breite', label:'Geographische Breite' },
+    { key:'laenge', label:'Geographische Länge' },
+    { key:'koordinaten', label:'oder: Koordinaten kombiniert (Breite, Länge)' },
+  ];
+
+  const opts = (['']).concat(headers).filter((v,i,a)=>a.indexOf(v)===i);
+  const buildRow = (f) => {
+    const current = columnMapping ? columnMapping[f.key] : '';
+    const optionsHtml = opts.map(o => `<option value="${escapeHtml(o)}" ${o===current?'selected':''}>${o===''?'– nicht vorhanden –':escapeHtml(o)}</option>`).join('');
+    return `<div class="mapping-row">
+      <label>${f.label}${f.required?' <span class="req-star">*</span>':''}</label>
+      <select id="map_${f.key}">${optionsHtml}</select>
+    </div>`;
+  };
+
+  let bodyHtml;
+  if(headers.length === 0){
+    bodyHtml = `<p class="hint">Noch keine Spalten bekannt. Bitte zuerst eine Datei importieren.</p>`;
+  } else {
+    bodyHtml = `
+      ${basicFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Kundenname</strong> — entweder eine fertige Spalte, oder aus Vor- und Nachname zusammensetzen:</p>
+      ${kundeFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Adresse</strong> — entweder eine fertige Spalte wählen, oder aus mehreren Spalten zusammensetzen (z.B. Straße + Hausnummer + Ort):</p>
+      ${addressFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Zähler</strong>:</p>
+      ${zaehlerFields.map(buildRow).join('')}
+      <p class="hint" style="margin:14px 0 8px"><strong>Koordinaten</strong> — entweder zwei getrennte Spalten, oder eine kombinierte:</p>
+      ${coordFields.map(buildRow).join('')}
+    `;
+  }
+
+  showModal(`
+    <div class="modal-head"><h3>Spaltenzuordnung${manual?' bearbeiten':''}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Ordne die Spalten deiner Datei den benötigten Feldern zu. Diese Zuordnung wird gespeichert und beim nächsten Import automatisch wiederverwendet.</p>
+      ${bodyHtml}
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" ${headers.length===0?'disabled':''} onclick="confirmMapping(${manual})">Übernehmen${pendingCsvRows && !manual ? ' & importieren' : ''}</button>
+    </div>
+  `);
+}
+
+function confirmMapping(manual){
+  const fields = ['kundencode','vorgang','auftragsbeschreibung','telefonnummer','email','zaehlerplatzId',
+    'kundenname','vorname','nachname',
+    'adresse','strasse','hausnummer','hausnummerzusatz','ortsteil','ort',
+    'zaehler','bauform','standort',
+    'breite','laenge','koordinaten'];
+  const mapping = {};
+  for(const f of fields){
+    const el = document.getElementById('map_'+f);
+    mapping[f] = el ? el.value : '';
+  }
+  if(!mapping.kundencode || !mapping.vorgang){
+    showToast('Kundencode und Vorgang müssen zugeordnet werden');
+    return;
+  }
+  columnMapping = mapping;
+  saveMapping();
+  closeModal();
+  if(!manual && pendingCsvRows){
+    runImport();
+  } else {
+    showToast('Spaltenzuordnung gespeichert');
+  }
+}
+
+function toStr(v){
+  if(v === undefined || v === null) return '';
+  let s = v.toString().trim();
+  // Excel sometimes stores identifiers (meter numbers etc.) as numbers,
+  // which surfaces as a trailing ".0" once converted to text — strip that.
+  if(/^\d+\.0$/.test(s)) s = s.slice(0, -2);
+  return s;
+}
+
+function buildAddress(raw, m){
+  if(m.adresse && toStr(raw[m.adresse]).trim()){
+    return toStr(raw[m.adresse]).trim();
+  }
+  const strasse = m.strasse ? toStr(raw[m.strasse]).trim() : '';
+  const hausnr = m.hausnummer ? toStr(raw[m.hausnummer]).trim() : '';
+  const hausnrZusatz = m.hausnummerzusatz ? toStr(raw[m.hausnummerzusatz]).trim() : '';
+  const ortsteil = m.ortsteil ? toStr(raw[m.ortsteil]).trim() : '';
+  const ort = m.ort ? toStr(raw[m.ort]).trim() : '';
+
+  const strassenteil = [strasse, (hausnr + hausnrZusatz)].filter(Boolean).join(' ');
+  const parts = [ortsteil, strassenteil, ort].filter(Boolean);
+  return parts.join(', ');
+}
+
+function buildCoords(raw, m){
+  if(m.breite && m.laenge){
+    const latRaw = toStr(raw[m.breite]).trim().replace(',', '.');
+    const lonRaw = toStr(raw[m.laenge]).trim().replace(',', '.');
+    const lat = parseFloat(latRaw);
+    const lon = parseFloat(lonRaw);
+    if(!isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180){
+      return { lat, lon };
+    }
+    return null;
+  }
+  if(m.koordinaten){
+    return parseCoords(raw[m.koordinaten]);
+  }
+  return null;
+}
+
+function buildKundenname(raw, m){
+  if(m.kundenname && toStr(raw[m.kundenname]).trim()){
+    return toStr(raw[m.kundenname]).trim();
+  }
+  const vorname = m.vorname ? toStr(raw[m.vorname]).trim() : '';
+  const nachname = m.nachname ? toStr(raw[m.nachname]).trim() : '';
+  return [vorname, nachname].filter(Boolean).join(' ');
+}
+
+function isOhneTerminStandort(standort){
+  if(!standort) return false;
+  const s = standort.toString().toLowerCase()
+    .replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue').replace(/ß/g,'ss');
+  return s.includes('station') || s.includes('zaehleranschlusssaeule');
+}
+
+function runImport(){
+  if(!pendingCsvRows || !columnMapping){ return; }
+  const m = columnMapping;
+  let added = 0, updatedExisting = 0, skippedDup = 0, skippedEmpty = 0, adrOnly = 0;
+
+  // map of existing OPEN (not erledigt) auftraege by key, so duplicates can be backfilled
+  const existingByKey = new Map();
+  auftraege.filter(a => a.status !== 'erledigt').forEach(a => {
+    existingByKey.set(norm(a.kundencode) + '|' + norm(a.vorgang), a);
+  });
+
+  for(const raw of pendingCsvRows){
+    const kundencode = toStr(m.kundencode ? raw[m.kundencode] : '');
+    const vorgang = toStr(m.vorgang ? raw[m.vorgang] : '');
+    const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
+
+    // Need at least one identifier to create any record at all
+    if(!kundencode.trim() && !zaehlerplatzId.trim()){ skippedEmpty++; continue; }
+
+    const telefonnummer = toStr(m.telefonnummer ? raw[m.telefonnummer] : '');
+    const email = toStr(m.email ? raw[m.email] : '');
+    const auftragsbeschreibung = toStr(m.auftragsbeschreibung ? raw[m.auftragsbeschreibung] : '');
+    const adresse = buildAddress(raw, m);
+    const koordinaten = buildCoords(raw, m);
+    const kundenname = buildKundenname(raw, m);
+    const zaehler = toStr(m.zaehler ? raw[m.zaehler] : '');
+    const bauform = toStr(m.bauform ? raw[m.bauform] : '');
+    const standort = toStr(m.standort ? raw[m.standort] : '');
+
+    // Always keep the address book current — regardless of whether this
+    // row has a Vorgang (Auftragstyp). This is the master data (Anschrift,
+    // Zählerplatz-ID, Standort etc.) and should cover every metering point,
+    // not just ones with a currently open order.
+    const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, email, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
+
+    if(!vorgang.trim()){
+      adrOnly++;
+      continue; // no Auftragstyp on this row → address book updated, but no Auftrag created
+    }
+
+    const key = norm(kundencode) + '|' + norm(vorgang);
+
+    if(existingByKey.has(key)){
+      // Duplicate: don't touch fields already filled (manual edits win),
+      // but backfill anything still empty — covers newly-mapped columns
+      // (e.g. Auftragsbeschreibung) that didn't exist on the first import.
+      const existing = existingByKey.get(key);
+      const backfill = { telefonnummer, email, auftragsbeschreibung, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort };
+      let changed = false;
+      Object.entries(backfill).forEach(([field, val]) => {
+        const isEmpty = existing[field] === '' || existing[field] === null || existing[field] === undefined;
+        const hasVal = field === 'koordinaten' ? !!val : (val !== '' && val !== null && val !== undefined);
+        if(isEmpty && hasVal){
+          existing.history.push({ ts: nowIso(), field, old:'', new: field==='koordinaten' ? fmtCoords(val) : val });
+          existing[field] = val;
+          changed = true;
+        }
+      });
+      if(changed) updatedExisting++;
+      skippedDup++;
+      continue;
+    }
+
+    const effectiveStandort = standort || adrEntry.standort || '';
+
+    const newAuftrag = {
+      id: uid(),
+      kundencode: kundencode.trim(),
+      vorgang: vorgang.trim(),
+      auftragsbeschreibung: auftragsbeschreibung,
+      telefonnummer: telefonnummer || adrEntry.telefonnummer || '',
+      email: email || adrEntry.email || '',
+      adresse: adresse || adrEntry.adresse || '',
+      zaehlerplatzId: zaehlerplatzId || adrEntry.zaehlerplatzId || '',
+      koordinaten: koordinaten || adrEntry.koordinaten || null,
+      kundenname: kundenname || adrEntry.kundenname || '',
+      zaehler: zaehler || adrEntry.zaehler || '',
+      bauform: bauform || adrEntry.bauform || '',
+      standort: effectiveStandort,
+      adrEntryId: adrEntry.id,
+      status: isOhneTerminStandort(effectiveStandort) ? 'ohne_termin' : 'offen',
+      kommentar: '',
+      termin: null,
+      importedAt: nowIso(),
+      history: [{ ts: nowIso(), field:'angelegt', old:'', new:'aus Datei-Import' }]
+    };
+    auftraege.push(newAuftrag);
+    existingByKey.set(key, newAuftrag);
+    added++;
+  }
+
+  saveAuftraege();
+  saveAdressbuch();
+  settings.lastImport = { ts: nowIso(), added, updatedExisting, skippedDup, skippedEmpty, adrOnly };
+  saveSettings();
+  pendingCsvRows = null;
+  render();
+  const bits = [`${added} neu`];
+  if(updatedExisting) bits.push(`${updatedExisting} bestehende ergänzt`);
+  if(adrOnly) bits.push(`${adrOnly} nur ins Adressbuch (kein Vorgang)`);
+  bits.push(`${skippedDup - updatedExisting} unverändert übersprungen`);
+  showToast(`Import fertig: ${bits.join(', ')}`);
+}
+
+/* ---------------------------------------------------------------
+   Backup export / import (for syncing via SharePoint/OneDrive)
+--------------------------------------------------------------- */
+async function exportBackup(){
+  const payload = {
+    kind: 'auftragsmappe-sicherung',
+    version: 1,
+    exportedAt: nowIso(),
+    auftraege,
+    adressbuch,
+    settings,
+    columnMapping,
+  };
+  const jsonStr = JSON.stringify(payload, null, 2);
+  const filename = 'auftragsmappe-daten.json';
+  const file = new File([jsonStr], filename, { type: 'application/json' });
+
+  let shared = false;
+  if(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
+    try{
+      await navigator.share({ files: [file], title: 'Auftragsmappe-Sicherung' });
+      shared = true;
+    }catch(e){
+      // user cancelled the share sheet, or it failed — fall through to download
+      if(e && e.name === 'AbortError'){ return; } // user just cancelled, don't also trigger a download
+    }
+  }
+
+  if(!shared){
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  settings.lastExport = nowIso();
+  saveSettings();
+  render();
+  showToast(shared ? 'Sicherung geteilt' : 'Sicherung heruntergeladen – im SharePoint-/OneDrive-Ordner ablegen');
+}
+
+document.getElementById('backupInput').addEventListener('change', function(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt){
+    let data;
+    try{ data = JSON.parse(evt.target.result); }
+    catch(err){ showToast('Datei ist kein gültiges Sicherungs-JSON'); return; }
+    if(data.kind !== 'auftragsmappe-sicherung'){
+      showToast('Das ist keine Auftragsmappen-Sicherungsdatei');
+      return;
+    }
+    mergeBackup(data);
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+// Returns a dedupe+sorted union of two history arrays
+function mergeHistories(h1, h2){
+  const all = (h1||[]).concat(h2||[]);
+  const seen = new Set();
+  const out = [];
+  for(const h of all){
+    const key = h.ts + '|' + h.field + '|' + h.new;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    out.push(h);
+  }
+  out.sort((a,b) => new Date(a.ts) - new Date(b.ts));
+  return out;
+}
+function lastTs(history){
+  if(!history || history.length === 0) return 0;
+  return Math.max(...history.map(h => new Date(h.ts).getTime()));
+}
+// Merge two records of the same entity: field values come from whichever
+// side was edited more recently, history is the union of both, nothing lost.
+function mergeRecord(local, incoming, fieldKeys){
+  const mergedHistory = mergeHistories(local.history, incoming.history);
+  const localNewer = lastTs(local.history) >= lastTs(incoming.history);
+  const base = localNewer ? local : incoming;
+  const merged = Object.assign({}, base);
+  merged.history = mergedHistory;
+  return merged;
+}
+function mergeCollection(localArr, incomingArr){
+  const map = new Map();
+  for(const item of localArr) map.set(item.id, item);
+  for(const item of incomingArr){
+    if(!map.has(item.id)){
+      map.set(item.id, item);
+    } else {
+      map.set(item.id, mergeRecord(map.get(item.id), item));
+    }
+  }
+  return Array.from(map.values());
+}
+
+function mergeBackup(data, silent){
+  const beforeA = auftraege.length, beforeB = adressbuch.length;
+  auftraege = mergeCollection(auftraege, data.auftraege || []);
+  adressbuch = mergeCollection(adressbuch, data.adressbuch || []);
+
+  // keep local settings unless locally unset
+  if(!settings.organizerEmail && data.settings && data.settings.organizerEmail){
+    settings.organizerEmail = data.settings.organizerEmail;
+  }
+  if(!columnMapping && data.columnMapping){
+    columnMapping = data.columnMapping;
+  }
+  settings.lastMergeImport = { ts: nowIso(), sourceExportedAt: data.exportedAt };
+
+  saveAuftraege();
+  saveAdressbuch();
+  saveSettings();
+  if(columnMapping) saveMapping();
+  if(!silent){
+    render();
+    showToast(`Sicherung zusammengeführt (${auftraege.length - beforeA >= 0 ? '+'+(auftraege.length-beforeA) : (auftraege.length-beforeA)} Aufträge, ${adressbuch.length - beforeB >= 0 ? '+'+(adressbuch.length-beforeB) : (adressbuch.length-beforeB)} Adressen neu)`);
+  }
+}
+
+let tempColumnOrder = []; // [{key, label, visible}] while the picker modal is open
+
+function syncTempColumnOrderFromDom(){
+  tempColumnOrder.forEach(item => {
+    const el = document.getElementById('colvis_'+item.key);
+    if(el) item.visible = el.checked;
+  });
+}
+
+function renderColumnPickerRows(){
+  return tempColumnOrder.map((item, idx) => `
+    <div class="col-picker-row">
+      <div class="col-picker-move">
+        <button class="icon-btn" ${idx===0?'disabled':''} onclick="moveColumnPicker(${idx}, -1)" title="Nach oben">▲</button>
+        <button class="icon-btn" ${idx===tempColumnOrder.length-1?'disabled':''} onclick="moveColumnPicker(${idx}, 1)" title="Nach unten">▼</button>
+      </div>
+      <label style="flex:1;border-bottom:none;padding:0">
+        <input type="checkbox" id="colvis_${item.key}" ${item.visible !== false ? 'checked' : ''}>
+        ${item.label}
+      </label>
+    </div>
+  `).join('');
+}
+
+function openColumnPicker(){
+  let order = (settings.columnOrder && settings.columnOrder.length) ? settings.columnOrder.slice() : DEFAULT_COLUMN_ORDER.slice();
+  (settings.customFields||[]).forEach(cf => { if(!order.includes(cf.key)) order.push(cf.key); });
+  const vc = settings.visibleColumns || DEFAULT_VISIBLE_COLUMNS;
+  tempColumnOrder = order.filter(k => getColumnLabel(k)).map(k => ({ key:k, label:getColumnLabel(k), visible: vc[k] !== false }));
+
+  showModal(`
+    <div class="modal-head"><h3>Sichtbare Spalten &amp; Reihenfolge</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Kundencode ist immer sichtbar und steht immer vorn. Mit ▲▼ änderst du die Reihenfolge der übrigen Spalten, mit dem Häkchen die Sichtbarkeit.</p>
+      <div class="col-picker" id="colPickerBody">${renderColumnPickerRows()}</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="saveColumnPicker()">Übernehmen</button>
+    </div>
+  `);
+}
+
+function moveColumnPicker(index, direction){
+  syncTempColumnOrderFromDom();
+  const target = index + direction;
+  if(target < 0 || target >= tempColumnOrder.length) return;
+  const tmp = tempColumnOrder[index];
+  tempColumnOrder[index] = tempColumnOrder[target];
+  tempColumnOrder[target] = tmp;
+  document.getElementById('colPickerBody').innerHTML = renderColumnPickerRows();
+}
+
+function saveColumnPicker(){
+  syncTempColumnOrderFromDom();
+  settings.columnOrder = tempColumnOrder.map(item => item.key);
+  tempColumnOrder.forEach(item => { settings.visibleColumns[item.key] = item.visible !== false; });
+  saveSettings();
+  closeModal();
+  render();
+  showToast('Spaltenansicht gespeichert');
+}
+
+function slugify(label){
+  return 'cf_' + label.toString().trim().toLowerCase()
+    .replace(/[äÄ]/g,'ae').replace(/[öÖ]/g,'oe').replace(/[üÜ]/g,'ue').replace(/ß/g,'ss')
+    .replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || ('feld' + Date.now());
+}
+
+function addCustomField(){
+  const input = document.getElementById('newCustomFieldLabel');
+  const label = input ? input.value.trim() : '';
+  if(!label){ showToast('Bitte einen Namen für das Feld eingeben'); return; }
+  if(!settings.customFields) settings.customFields = [];
+  let key = slugify(label);
+  let n = 1;
+  while(settings.customFields.some(cf => cf.key === key) || COLUMN_LABELS[key]){
+    key = slugify(label) + '_' + (++n);
+  }
+  settings.customFields.push({ key, label });
+  if(!settings.visibleColumns) settings.visibleColumns = {};
+  settings.visibleColumns[key] = true;
+  saveSettings();
+  render();
+  showToast('Feld „' + label + '" hinzugefügt');
+}
+
+function removeCustomField(key){
+  settings.customFields = (settings.customFields||[]).filter(cf => cf.key !== key);
+  saveSettings();
+  render();
+  showToast('Feld entfernt (bereits eingetragene Werte in Aufträgen bleiben erhalten)');
+}
+
+/* ---------------------------------------------------------------
+   Settings modal (organizer email)
+--------------------------------------------------------------- */
+function openSettingsModal(){
+  showModal(`
+    <div class="modal-head"><h3>Absenderadresse für Termineinladungen</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Deine E-Mail-Adresse (Organisator)</label>
+        <input type="email" id="orgEmailInput" value="${escapeHtml(settings.organizerEmail||'')}" placeholder="vorname.nachname@firma.de">
+      </div>
+      <p class="hint">Diese Adresse wird als Organisator in jede generierte Termineinladung (.ics) eingetragen. Beim Öffnen der Datei erkennt Outlook dich damit automatisch als Absender.</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="saveOrgEmail()">Speichern</button>
+    </div>
+  `);
+}
+function saveOrgEmail(){
+  const val = document.getElementById('orgEmailInput').value.trim();
+  settings.organizerEmail = val;
+  saveSettings();
+  updateOrgStamp();
+  closeModal();
+  showToast('Absenderadresse gespeichert');
+}
+function updateOrgStamp(){
+  const el = document.getElementById('orgEmailStamp');
+  el.textContent = settings.organizerEmail ? settings.organizerEmail : 'Absender nicht gesetzt';
+}
+
+/* ---------------------------------------------------------------
+   Modal helpers
+--------------------------------------------------------------- */
+function showModal(innerHtml){
+  closeModal();
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.id = 'activeModalBackdrop';
+  backdrop.onclick = (e) => { if(e.target === backdrop) closeModal(); };
+  backdrop.innerHTML = `<div class="modal">${innerHtml}</div>`;
+  document.body.appendChild(backdrop);
+}
+function closeModal(){
+  const el = document.getElementById('activeModalBackdrop');
+  if(el) el.remove();
+}
+function escapeHtml(s){
+  return (s||'').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---------------------------------------------------------------
+   Tabs / Rendering
+--------------------------------------------------------------- */
+function switchTab(tab){
+  currentTab = tab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('view-offen').style.display = tab === 'offen' ? '' : 'none';
+  document.getElementById('view-erledigt').style.display = tab === 'erledigt' ? '' : 'none';
+  document.getElementById('view-termine').style.display = tab === 'termine' ? '' : 'none';
+  document.getElementById('view-adressbuch').style.display = tab === 'adressbuch' ? '' : 'none';
+  document.getElementById('view-statistik').style.display = tab === 'statistik' ? '' : 'none';
+  document.getElementById('view-einstellungen').style.display = tab === 'einstellungen' ? '' : 'none';
+  if(tab === 'statistik'){ document.getElementById('view-statistik').innerHTML = renderStatistik(); }
+}
+
+function render(){
+  const offen = auftraege.filter(a => a.status !== 'erledigt');
+  const erledigt = auftraege.filter(a => a.status === 'erledigt');
+  const mitTermin = auftraege.filter(a => a.termin);
+  document.getElementById('tabCountOffen').textContent = offen.length;
+  document.getElementById('tabCountErledigt').textContent = erledigt.length;
+  document.getElementById('tabCountTermine').textContent = mitTermin.length;
+  const todayIsoForBadge = new Date().toISOString().slice(0,10);
+  const dueCallbackCount = auftraege.filter(a => a.wiedervorlage && a.status !== 'erledigt' && a.wiedervorlage.datum <= todayIsoForBadge).length;
+  const callbackBadge = document.getElementById('tabCountCallback');
+  if(callbackBadge){
+    callbackBadge.style.display = dueCallbackCount > 0 ? '' : 'none';
+    callbackBadge.textContent = '📞' + dueCallbackCount;
+  }
+  document.getElementById('tabCountAdr').textContent = adressbuch.length;
+  const backupWarnBadge = document.getElementById('tabWarnBackup');
+  if(backupWarnBadge){
+    const isFolderLinked = folderHandle && !folderNeedsPermission;
+    const days = daysSinceLastBackup();
+    const stale = !isFolderLinked && (days === null || days >= 14);
+    backupWarnBadge.style.display = stale ? '' : 'none';
+  }
+
+  renderTabView('offen', offen);
+  renderTabView('erledigt', erledigt);
+  document.getElementById('view-termine').innerHTML = renderTermine(mitTermin, auftraege);
+  document.getElementById('view-adressbuch').innerHTML = renderAdressbuch();
+  document.getElementById('view-einstellungen').innerHTML = renderEinstellungen();
+  if(currentTab === 'statistik'){ document.getElementById('view-statistik').innerHTML = renderStatistik(); }
+  updateOrgStamp();
+}
+
+function renderStatistik(){
+  const total = auftraege.length;
+  const byStatus = {};
+  Object.keys(STATUS).forEach(k => byStatus[k] = 0);
+  auftraege.forEach(a => { byStatus[a.status] = (byStatus[a.status]||0) + 1; });
+
+  const byVorgang = {};
+  auftraege.forEach(a => { if(a.vorgang) byVorgang[a.vorgang] = (byVorgang[a.vorgang]||0) + 1; });
+  const vorgangSorted = Object.entries(byVorgang).sort((a,b) => b[1]-a[1]).slice(0, 8);
+
+  const now = new Date();
+  const startOfWeek = new Date(now); startOfWeek.setDate(now.getDate() - ((now.getDay()+6)%7)); startOfWeek.setHours(0,0,0,0);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  let erledigtWeek = 0, erledigtMonth = 0;
+  auftraege.forEach(a => {
+    if(a.status !== 'erledigt') return;
+    const entry = a.history.slice().reverse().find(h => h.field === 'status' && h.new === STATUS.erledigt.label);
+    if(!entry) return;
+    const d = new Date(entry.ts);
+    if(d >= startOfWeek) erledigtWeek++;
+    if(d >= startOfMonth) erledigtMonth++;
+  });
+
+  const maxStatusCount = Math.max(1, ...Object.values(byStatus));
+  const statusRows = Object.entries(STATUS).map(([k,v]) => `
+    <div class="stat-row">
+      <span class="stat-label">${v.label}</span>
+      <div class="stat-bar-track"><div class="stat-bar-fill ${v.cls}" style="width:${(byStatus[k]/maxStatusCount*100).toFixed(0)}%"></div></div>
+      <span class="stat-count">${byStatus[k]}</span>
+    </div>`).join('');
+
+  const maxVorgangCount = Math.max(1, ...vorgangSorted.map(v => v[1]));
+  const vorgangRows = vorgangSorted.map(([name,count]) => `
+    <div class="stat-row">
+      <span class="stat-label">${escapeHtml(name)}</span>
+      <div class="stat-bar-track"><div class="stat-bar-fill" style="width:${(count/maxVorgangCount*100).toFixed(0)}%;background:${colorForVorgang(name)}"></div></div>
+      <span class="stat-count">${count}</span>
+    </div>`).join('');
+
+  return `
+    <div class="settings-section">
+      <h4>Überblick</h4>
+      <div class="stat-summary">
+        <div class="stat-tile"><div class="stat-tile-num">${total}</div><div class="stat-tile-label">Gesamt</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${byStatus.offen||0}</div><div class="stat-tile-label">Offen</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${byStatus.erledigt||0}</div><div class="stat-tile-label">Erledigt</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${erledigtWeek}</div><div class="stat-tile-label">Diese Woche erledigt</div></div>
+        <div class="stat-tile"><div class="stat-tile-num">${erledigtMonth}</div><div class="stat-tile-label">Diesen Monat erledigt</div></div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h4>Nach Status</h4>
+      ${statusRows}
+    </div>
+    <div class="settings-section">
+      <h4>Nach Vorgangstyp (Top 8)</h4>
+      ${vorgangRows || '<p class="hint">Noch keine Daten</p>'}
+    </div>
+  `;
+}
+
+let termineShowPast = false;
+
+function toggleTerminePast(){
+  termineShowPast = !termineShowPast;
+  render();
+}
+
+function renderTermine(list, allAuftraege){
+  const todayIso = new Date().toISOString().slice(0,10);
+
+  // Build one combined list of agenda entries: Termine + Rückrufe (Wiedervorlage)
+  let entries = [];
+  list.forEach(a => {
+    entries.push({ type:'termin', auftrag:a, dateIso:a.termin.dateIso, date:a.termin.date, time:a.termin.time });
+  });
+  (allAuftraege || []).forEach(a => {
+    if(a.wiedervorlage && a.status !== 'erledigt'){
+      entries.push({ type:'rueckruf', auftrag:a, dateIso:a.wiedervorlage.datum, date:fmtDateDe(a.wiedervorlage.datum), time:a.wiedervorlage.zeit||'09:00' });
+    }
+  });
+
+  // By default: hide erledigt Aufträge and anything before today — done is done.
+  const hiddenCount = entries.filter(e => e.auftrag.status === 'erledigt' || e.dateIso < todayIso).length;
+  if(!termineShowPast){
+    entries = entries.filter(e => e.auftrag.status !== 'erledigt' && e.dateIso >= todayIso);
+  }
+
+  const toggleBarHtml = hiddenCount > 0 ? `
+    <div class="view-toggle">
+      <button class="btn small ${termineShowPast?'active':''}" onclick="toggleTerminePast()">
+        ${termineShowPast ? '🙈 Vergangene/erledigte wieder ausblenden' : `👁 ${hiddenCount} vergangene/erledigte anzeigen`}
+      </button>
+    </div>` : '';
+
+  if(entries.length === 0){
+    return toggleBarHtml || `<div class="empty-state">
+      <div class="big">Noch keine Termine oder Rückrufe</div>
+      <div>Termine (📅) und Rückruf-Erinnerungen (📞) erscheinen hier zusammen, chronologisch nach Tag.</div>
+    </div>`;
+  }
+
+  const sorted = entries.slice().sort((a,b) => (a.dateIso + 'T' + a.time).localeCompare(b.dateIso + 'T' + b.time));
+
+  const groups = [];
+  let currentGroup = null;
+  sorted.forEach(entry => {
+    if(!currentGroup || currentGroup.dateIso !== entry.dateIso){
+      currentGroup = { dateIso: entry.dateIso, date: entry.date, items: [] };
+      groups.push(currentGroup);
+    }
+    currentGroup.items.push(entry);
+  });
+
+  const statusColorMap = { offen:'#55635f', ohne_termin:'#4a6b8a', in_bearbeitung:'#b5790a', termin_vereinbart:'#2b5a8c',
+    kunde_rueckmeldung:'#6a4c8c', anlage_nicht_fertig:'#a3392f', warte_planung:'#b5540a',
+    inbetriebnahme_erfolgt:'#106b78', erledigt:'#2c7a4b' };
+
+  const groupsHtml = groups.map(g => {
+    const isPast = g.dateIso < todayIso;
+    const isToday = g.dateIso === todayIso;
+    const itemsHtml = g.items.map(entry => {
+      const a = entry.auftrag;
+      if(entry.type === 'rueckruf'){
+        return `
+          <div class="agenda-item" onclick="openAuftragEditModal('${a.id}')" style="border-left:3px solid var(--purple)">
+            <div class="agenda-time">📞 ${entry.time}</div>
+            <div class="agenda-main">
+              <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
+              <div class="agenda-sub">Rückruf${a.telefonnummer ? ' · ' + escapeHtml(a.telefonnummer) : ''}</div>
+            </div>
+            <div class="pop-status" style="background:var(--purple-bg);color:var(--purple);white-space:nowrap">Rückruf</div>
+          </div>`;
+      }
+      const color = statusColorMap[a.status] || '#55635f';
+      return `
+        <div class="agenda-item" onclick="openAuftragEditModal('${a.id}')">
+          <div class="agenda-time">${entry.time}</div>
+          <div class="agenda-main">
+            <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
+            <div class="agenda-sub">${escapeHtml(a.vorgang)}${a.adresse ? ' · ' + escapeHtml(a.adresse) : ''}</div>
+          </div>
+          <div class="pop-status" style="background:${color}22;color:${color};white-space:nowrap">${STATUS[a.status].label}</div>
+        </div>`;
+    }).join('');
+    return `
+      <div class="agenda-group">
+        <div class="agenda-date-header ${isPast?'is-past':''} ${isToday?'is-today':''}">
+          ${g.date}${isToday ? ' · Heute' : ''}
+        </div>
+        ${itemsHtml}
+      </div>`;
+  }).join('');
+
+  return `${toggleBarHtml}<div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
+}
+
+function daysSinceLastBackup(){
+  const dates = [];
+  if(settings.lastExport) dates.push(new Date(settings.lastExport));
+  if(settings.folderLastSync) dates.push(new Date(settings.folderLastSync));
+  if(dates.length === 0) return null;
+  const mostRecent = new Date(Math.max(...dates.map(d => d.getTime())));
+  return Math.floor((Date.now() - mostRecent.getTime()) / (1000*60*60*24));
+}
+function backupStalenessWarningHtml(){
+  // Only nudge if there's no auto-synced folder linked — that case is already handled automatically.
+  if(folderHandle && !folderNeedsPermission) return '';
+  const days = daysSinceLastBackup();
+  if(days === null){
+    return `<p class="hint" style="color:var(--red)">⚠️ Noch nie gesichert. Bei einer über Jahre wachsenden Liste lohnt sich eine regelmäßige Sicherung außerhalb des Geräts.</p>`;
+  }
+  if(days >= 14){
+    return `<p class="hint" style="color:var(--red)">⚠️ Letzte Sicherung ist ${days} Tage her. Zeit für eine neue Sicherung nach SharePoint/OneDrive.</p>`;
+  }
+  return '';
+}
+
+function renderEinstellungen(){
+  const lp = settings.lastImport;
+  const lastImportText = lp
+    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu${lp.updatedExisting ? ' · ' + lp.updatedExisting + ' bestehende ergänzt' : ''}${lp.adrOnly ? ' · ' + lp.adrOnly + ' nur ins Adressbuch' : ''} · ${lp.skippedDup} Duplikate übersprungen`
+    : 'Noch kein Import';
+
+  const syncBits = [];
+  if(settings.lastExport) syncBits.push('Sicherung exportiert: ' + fmtTs(settings.lastExport));
+  if(settings.lastMergeImport) syncBits.push('Zuletzt zusammengeführt: ' + fmtTs(settings.lastMergeImport.ts));
+  const syncText = syncBits.length
+    ? syncBits.join(' · ')
+    : 'Noch keine Sicherung ausgetauscht — exportiere und lege die Datei in deinem SharePoint-/OneDrive-Ordner ab';
+
+  return `
+    <div class="settings-section">
+      <h4>Daten importieren</h4>
+      <div class="settings-row">
+        <button class="btn primary" onclick="document.getElementById('csvInput').click()">Datei importieren (CSV/Excel)</button>
+        <button class="btn" onclick="openMappingModal(true)">Spaltenzuordnung</button>
+      </div>
+      <p class="hint">${escapeHtml(lastImportText)}</p>
+    </div>
+
+    <div class="settings-section">
+      <h4>Anzeige</h4>
+      <div class="settings-row">
+        <button class="btn" onclick="openColumnPicker()">👁 Sichtbare Spalten</button>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h4>Eigene Felder</h4>
+      ${(settings.customFields||[]).length === 0 ? '<p class="hint" style="margin-top:0">Noch keine eigenen Felder angelegt.</p>' : `
+        <div class="custom-field-list">
+          ${settings.customFields.map(cf => `
+            <div class="custom-field-row">
+              <span>${escapeHtml(cf.label)}</span>
+              <button class="icon-btn" onclick="removeCustomField('${cf.key}')" title="Entfernen">🗑</button>
+            </div>
+          `).join('')}
+        </div>
+      `}
+      <div class="settings-row" style="margin-top:10px">
+        <input type="text" id="newCustomFieldLabel" class="new-field-input" placeholder="Name des neuen Feldes" style="flex:1;min-width:160px;padding:8px 11px;border:1px solid var(--line);border-radius:6px;font-size:13.5px">
+        <button class="btn" onclick="addCustomField()">+ Feld hinzufügen</button>
+      </div>
+      <p class="hint">Eigene Felder erscheinen als zusätzliche, frei editierbare Spalte in der Auftragstabelle und im Bearbeiten-Fenster.</p>
+    </div>
+
+    <div class="settings-section">
+      <h4>Termineinladungen</h4>
+      <div class="settings-row">
+        <button class="btn" onclick="openSettingsModal()">Absenderadresse</button>
+      </div>
+      <p class="hint">${settings.organizerEmail ? 'Aktuell: ' + escapeHtml(settings.organizerEmail) : 'Noch keine Absenderadresse hinterlegt.'}</p>
+    </div>
+
+    <div class="settings-section">
+      <h4>Eigene Sicherungsdatei (PC, Chrome/Edge)</h4>
+      <div class="settings-row">
+        ${folderHandle && !folderNeedsPermission
+          ? `<button class="btn" onclick="chooseFolder()">📄 Andere Datei wählen</button>`
+          : folderNeedsPermission
+            ? `<button class="btn primary" onclick="reconnectFolder()">🔄 Datei wieder verbinden</button>`
+            : `<button class="btn primary" onclick="chooseFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Datei verknüpfen</button>`
+        }
+      </div>
+      <p class="hint">
+        ${!FS_SUPPORTED
+          ? 'Auf diesem Gerät/Browser nicht verfügbar (nur Desktop Chrome/Edge). Bitte weiterhin Sicherung exportieren/importieren nutzen.'
+          : folderHandle && !folderNeedsPermission
+            ? 'Verknüpft — Änderungen werden automatisch in diese Datei geschrieben. Wähle dafür eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, dann landen die Daten zentral.' + (settings.folderLastSync ? ' Zuletzt gespeichert: ' + fmtTs(settings.folderLastSync) : '')
+            : folderNeedsPermission
+              ? 'Datei war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
+              : 'Wähle (oder erstelle) eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, z.B. "auftragsmappe-daten.json". Die App liest und schreibt danach automatisch dort hinein — kein manueller Export mehr nötig auf diesem Gerät.'
+        }
+      </p>
+    </div>
+
+    <div class="settings-section">
+      <h4>Geräteübergreifende Sicherung (manuell, z.B. Handy)</h4>
+      <div class="settings-row">
+        <button class="btn" onclick="exportBackup()">📤 Sicherung exportieren</button>
+        <button class="btn" onclick="document.getElementById('backupInput').click()">📥 Sicherung importieren</button>
+      </div>
+      <p class="hint">${escapeHtml(syncText)}</p>
+      ${backupStalenessWarningHtml()}
+    </div>
+
+    <div class="settings-section" style="border-color:var(--red-bg)">
+      <h4 style="color:var(--red)">Daten zurücksetzen</h4>
+      <div class="settings-row">
+        <button class="btn danger" onclick="confirmResetAuftraege()">Alle Aufträge löschen</button>
+        <button class="btn danger" onclick="confirmResetAdressbuch()">Adressbuch löschen</button>
+        <button class="btn" onclick="confirmResetMapping()">Spaltenzuordnung zurücksetzen</button>
+      </div>
+      <p class="hint">Zum Testen einer neuen Datenstruktur reicht meist „Alle Aufträge löschen" + „Spaltenzuordnung zurücksetzen". Das Adressbuch ist bewusst dauerhaft — lösche es nur, wenn du wirklich neu anfangen willst.</p>
+    </div>
+  `;
+}
+
+function confirmResetAuftraege(){
+  showModal(`
+    <div class="modal-head"><h3>Alle Aufträge löschen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle offenen und erledigten Aufträge inkl. Verlauf unwiderruflich. Das Adressbuch bleibt unberührt. Nicht rückgängig zu machen.</p></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetAuftraege()">Endgültig löschen</button></div>
+  `);
+}
+function doResetAuftraege(){
+  auftraege = [];
+  saveAuftraege();
+  closeModal();
+  render();
+  showToast('Alle Aufträge gelöscht');
+}
+
+function confirmResetAdressbuch(){
+  showModal(`
+    <div class="modal-head"><h3>Adressbuch löschen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle Adressbuch-Einträge inkl. Verlauf unwiderruflich — auch die, die nicht mehr aus offenen Aufträgen stammen. Nicht rückgängig zu machen.</p></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetAdressbuch()">Endgültig löschen</button></div>
+  `);
+}
+function doResetAdressbuch(){
+  adressbuch = [];
+  saveAdressbuch();
+  closeModal();
+  render();
+  showToast('Adressbuch gelöscht');
+}
+
+function confirmResetMapping(){
+  showModal(`
+    <div class="modal-head"><h3>Spaltenzuordnung zurücksetzen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Beim nächsten Import fragt die App die Spaltenzuordnung erneut ab. Bereits importierte Daten bleiben davon unberührt.</p></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn primary" onclick="doResetMapping()">Zurücksetzen</button></div>
+  `);
+}
+function doResetMapping(){
+  columnMapping = null;
+  saveMapping();
+  closeModal();
+  render();
+  showToast('Spaltenzuordnung zurückgesetzt');
+}
+
+let filters = {
+  offen:    { search:'', statuses:[], vorgaenge:[] },
+  erledigt: { search:'', statuses:[], vorgaenge:[] }
+};
+let tempFilterSelection = { tabKey:null, type:null, selected:[] };
+let tempFilterOptions = [];
+
+function getFullListForTab(tabKey){
+  return auftraege.filter(a => tabKey === 'erledigt' ? a.status === 'erledigt' : a.status !== 'erledigt');
+}
+
+function applyFilters(list, tabKey){
+  const f = filters[tabKey];
+  if(!f.search && f.statuses.length === 0 && f.vorgaenge.length === 0) return list;
+  const q = f.search.trim().toLowerCase();
+  return list.filter(a => {
+    if(f.statuses.length && !f.statuses.includes(a.status)) return false;
+    if(f.vorgaenge.length && !f.vorgaenge.includes(a.vorgang)) return false;
+    if(q){
+      const haystack = [a.kundencode, a.kundenname, a.vorgang, a.adresse, a.standort,
+        a.telefonnummer, a.email, a.zaehler, a.bauform, a.zaehlerplatzId, a.kommentar]
+        .map(v => (v||'').toString().toLowerCase()).join(' ');
+      if(!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderFilterBar(tabKey, fullList){
+  const f = filters[tabKey];
+  const statusActive = f.statuses.length > 0;
+  const vorgangActive = f.vorgaenge.length > 0;
+  const anyActive = !!(f.search || statusActive || vorgangActive);
+  return `
+    <div class="filter-bar">
+      <input type="text" id="filtersearch-${tabKey}" class="filter-search" placeholder="Suchen (Name, Adresse, Kundencode, Kommentar…)"
+        value="${escapeHtml(f.search)}" oninput="setFilter('${tabKey}','search', this.value)">
+      <button class="btn small ${statusActive?'primary':''}" onclick="openMultiFilterModal('${tabKey}','status')">
+        Status${statusActive ? ' (' + f.statuses.length + ')' : ''} ▾
+      </button>
+      <button class="btn small ${vorgangActive?'primary':''}" onclick="openMultiFilterModal('${tabKey}','vorgang')">
+        Vorgangstyp${vorgangActive ? ' (' + f.vorgaenge.length + ')' : ''} ▾
+      </button>
+      ${anyActive ? `<button class="btn small ghost" onclick="resetFilter('${tabKey}')">✕ Filter zurücksetzen</button>` : ''}
+    </div>`;
+}
+
+function setFilter(tabKey, key, value){
+  filters[tabKey][key] = value;
+  const searchEl = document.getElementById('filtersearch-' + tabKey);
+  const cursorPos = searchEl ? searchEl.selectionStart : null;
+
+  renderTabView(tabKey, getFullListForTab(tabKey));
+
+  if(key === 'search'){
+    const newEl = document.getElementById('filtersearch-' + tabKey);
+    if(newEl){
+      newEl.focus();
+      if(cursorPos !== null) newEl.setSelectionRange(cursorPos, cursorPos);
+    }
+  }
+}
+function resetFilter(tabKey){
+  filters[tabKey] = { search:'', statuses:[], vorgaenge:[] };
+  render();
+}
+
+/* --- Excel-style multi-select filter popover (as a modal) --- */
+function openMultiFilterModal(tabKey, type){
+  const isStatus = type === 'status';
+  const options = isStatus
+    ? Object.entries(STATUS).map(([k,v]) => ({ value:k, label:v.label }))
+    : Array.from(new Set(getFullListForTab(tabKey).map(a => a.vorgang).filter(Boolean))).sort().map(v => ({ value:v, label:v }));
+
+  const current = filters[tabKey][isStatus ? 'statuses' : 'vorgaenge'];
+  const startSelected = current.length === 0 ? options.map(o => o.value) : current.slice();
+  tempFilterSelection = { tabKey, type, selected: startSelected };
+  tempFilterOptions = options;
+
+  showModal(`
+    <div class="modal-head"><h3>${isStatus ? 'Status' : 'Vorgangstyp'} filtern</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="settings-row" style="margin-bottom:10px">
+        <button class="btn small" onclick="toggleAllFilterOptions(true)">Alle auswählen</button>
+        <button class="btn small" onclick="toggleAllFilterOptions(false)">Alle abwählen</button>
+      </div>
+      <div class="col-picker" id="filterOptionsBody">${renderFilterOptionRows()}</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="applyMultiFilter()">Anwenden</button>
+    </div>
+  `);
+}
+function renderFilterOptionRows(){
+  return tempFilterOptions.map(o => `
+    <label>
+      <input type="checkbox" data-fval="${escapeHtml(o.value)}" ${tempFilterSelection.selected.includes(o.value)?'checked':''} onchange="syncFilterCheckbox(this)">
+      ${escapeHtml(o.label)}
+    </label>
+  `).join('');
+}
+function syncFilterCheckbox(el){
+  const val = el.dataset.fval;
+  if(el.checked){
+    if(!tempFilterSelection.selected.includes(val)) tempFilterSelection.selected.push(val);
+  } else {
+    tempFilterSelection.selected = tempFilterSelection.selected.filter(v => v !== val);
+  }
+}
+function toggleAllFilterOptions(checkAll){
+  tempFilterSelection.selected = checkAll ? tempFilterOptions.map(o => o.value) : [];
+  document.getElementById('filterOptionsBody').innerHTML = renderFilterOptionRows();
+}
+function applyMultiFilter(){
+  const { tabKey, type, selected } = tempFilterSelection;
+  const key = type === 'status' ? 'statuses' : 'vorgaenge';
+  // everything selected == no filter, stored as empty array for clean "all" state
+  filters[tabKey][key] = (selected.length === tempFilterOptions.length) ? [] : selected.slice();
+  closeModal();
+  render();
+}
+
+function renderTabView(tabKey, fullList){
+  const container = document.getElementById('view-' + tabKey);
+  const list = applyFilters(fullList, tabKey);
+  const selCount = selection[tabKey].size;
+  const selectionBarHtml = selCount > 0 ? `
+    <div class="selection-bar">
+      <span>${selCount} ausgewählt</span>
+      <button class="btn small" onclick="openBulkStatusModal('${tabKey}')">Status ändern</button>
+      <button class="btn small" onclick="planRouteForSelection('${tabKey}')">🗺️ Route planen</button>
+      <button class="btn small ghost" style="color:#fff" onclick="clearSelection('${tabKey}')">Auswahl aufheben</button>
+    </div>` : '';
+  const toggleHtml = `
+    <div class="view-toggle">
+      <button class="btn small ${viewMode[tabKey]==='liste'?'active':''}" onclick="setViewMode('${tabKey}','liste')">📋 Liste</button>
+      <button class="btn small ${viewMode[tabKey]==='karte'?'active':''}" onclick="setViewMode('${tabKey}','karte')">🗺️ Karte</button>
+      ${viewMode[tabKey]==='karte' ? `
+        <span style="width:1px;height:20px;background:var(--line);display:inline-block;margin:0 4px"></span>
+        <span class="muted" style="font-size:12px">Farbe:</span>
+        <button class="btn small ${mapColorMode[tabKey]==='status'?'active':''}" onclick="setMapColorMode('${tabKey}','status')">Status</button>
+        <button class="btn small ${mapColorMode[tabKey]==='vorgang'?'active':''}" onclick="setMapColorMode('${tabKey}','vorgang')">Vorgangstyp</button>
+      ` : ''}
+      ${list.length !== fullList.length ? `<span class="count-pill" style="margin-left:6px">${list.length} von ${fullList.length}</span>` : ''}
+    </div>`;
+  const filterHtml = renderFilterBar(tabKey, fullList);
+
+  if(viewMode[tabKey] === 'karte'){
+    container.innerHTML = selectionBarHtml + filterHtml + toggleHtml + renderMapLegend(tabKey, list) + `<div id="map-${tabKey}" style="height:540px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>`;
+    initMapForTab(tabKey, list);
+  } else {
+    if(mapInstances[tabKey]){ mapInstances[tabKey].remove(); delete mapInstances[tabKey]; }
+    container.innerHTML = selectionBarHtml + filterHtml + toggleHtml + renderAuftragTable(list, tabKey === 'erledigt');
+  }
+}
+
+function setViewMode(tabKey, mode){
+  viewMode[tabKey] = mode;
+  render();
+}
+
+
+let mapColorMode = { offen: 'status', erledigt: 'status' };
+
+function colorForVorgang(str){
+  const s = (str || '–').toString();
+  let hash = 0;
+  for(let i=0;i<s.length;i++){ hash = s.charCodeAt(i) + ((hash<<5)-hash); }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 58%, 40%)`;
+}
+
+function initMapForTab(tabKey, list){
+  const withCoords = list.filter(a => a.koordinaten);
+  const el = document.getElementById('map-' + tabKey);
+  if(!el) return;
+  if(mapInstances[tabKey]){ mapInstances[tabKey].remove(); delete mapInstances[tabKey]; }
+
+  if(withCoords.length === 0){
+    el.outerHTML = `<div class="map-empty">Keine Koordinaten in ${tabKey === 'erledigt' ? 'den erledigten' : 'den offenen'} Aufträgen vorhanden.</div>`;
+    return;
+  }
+
+  const map = L.map('map-' + tabKey);
+  mapInstances[tabKey] = map;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19
+  }).addTo(map);
+
+  const statusColor = {
+    offen:'#55635f', ohne_termin:'#4a6b8a', in_bearbeitung:'#b5790a', termin_vereinbart:'#2b5a8c',
+    kunde_rueckmeldung:'#6a4c8c', anlage_nicht_fertig:'#a3392f',
+    warte_planung:'#b5540a', inbetriebnahme_erfolgt:'#106b78', erledigt:'#2c7a4b'
+  };
+  const byVorgang = mapColorMode[tabKey] === 'vorgang';
+  const colorFor = (a) => byVorgang ? colorForVorgang(a.vorgang) : (statusColor[a.status] || '#55635f');
+
+  const bounds = [];
+  const sel = selection[tabKey];
+  withCoords.forEach(a => {
+    const color = colorFor(a);
+    const isSelected = sel.has(a.id);
+    const icon = L.divIcon({
+      className: '',
+      html: isSelected
+        ? `<div style="width:20px;height:20px;border-radius:50%;background:${color};border:3px solid var(--teal);box-shadow:0 0 0 2px #fff, 0 0 6px rgba(31,92,86,.6);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:bold">✓</div>`
+        : `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 1px ${color}"></div>`,
+      iconSize: isSelected ? [20,20] : [16,16], iconAnchor: isSelected ? [10,10] : [8,8]
+    });
+    const marker = L.marker([a.koordinaten.lat, a.koordinaten.lon], { icon }).addTo(map);
+    marker.bindPopup(`
+      <div class="pop-code">${escapeHtml(a.kundencode)}</div>
+      ${a.kundenname ? `<div>${escapeHtml(a.kundenname)}</div>` : ''}
+      <div>${escapeHtml(a.vorgang)}</div>
+      <div class="pop-status" style="background:${color}22;color:${color}">${byVorgang ? escapeHtml(a.vorgang) : STATUS[a.status].label}</div>
+      ${a.adresse ? `<div style="margin-top:6px">${escapeHtml(a.adresse)}</div>` : ''}
+      ${a.standort ? `<div class="muted">${escapeHtml(a.standort)}</div>` : ''}
+      ${a.telefonnummer ? `<div class="muted">${escapeHtml(a.telefonnummer)}</div>` : ''}
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px">
+        <input type="checkbox" ${isSelected?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"> Für Route auswählen
+      </label>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="btn small" onclick="navigateToAuftrag('${a.id}')" style="flex:1">🧭 Navigation</button>
+        <button class="btn small primary" onclick="openAuftragEditModal('${a.id}')" style="flex:1">✏️ Bearbeiten</button>
+      </div>
+    `);
+    bounds.push([a.koordinaten.lat, a.koordinaten.lon]);
+  });
+  if(bounds.length === 1){ map.setView(bounds[0], 15); }
+  else{ map.fitBounds(bounds, { padding: [30,30] }); }
+}
+
+function setMapColorMode(tabKey, mode){
+  mapColorMode[tabKey] = mode;
+  render();
+}
+
+function renderMapLegend(tabKey, list){
+  if(mapColorMode[tabKey] !== 'vorgang') return '';
+  const types = Array.from(new Set(list.filter(a=>a.koordinaten).map(a=>a.vorgang).filter(Boolean))).sort();
+  if(types.length === 0) return '';
+  const chips = types.map(t => `
+    <span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink-soft);margin-right:10px">
+      <span style="width:10px;height:10px;border-radius:50%;background:${colorForVorgang(t)};display:inline-block"></span>${escapeHtml(t)}
+    </span>`).join('');
+  return `<div style="padding:8px 2px 12px;line-height:2">${chips}</div>`;
+}
+
+const COLUMN_LABELS = Object.fromEntries(COLUMN_DEFS.map(c => [c.key, c.label]));
+
+function simpleTextCell(a, key, label, placeholder){
+  return `<td data-label="${label}">
+      <input class="cell-input" type="text" value="${escapeHtml(a[key])}"
+        onchange="updateAuftragField('${a.id}','${key}', this.value)" placeholder="${placeholder||'–'}">
+    </td>`;
+}
+function phoneSearchUrl(name, adresse){
+  const q = [name, adresse, 'Telefonnummer'].filter(Boolean).join(' ');
+  return 'https://www.google.com/search?q=' + encodeURIComponent(q);
+}
+/* ---------------------------------------------------------------
+   Zähler-Scanner (QR/Barcode via Kamera)
+--------------------------------------------------------------- */
+let html5QrScanner = null;
+
+function openScanner(){
+  if(typeof Html5Qrcode === 'undefined'){
+    showToast('Scanner konnte nicht geladen werden (kein Internet?)');
+    return;
+  }
+  showModal(`
+    <div class="modal-head"><h3>Zähler scannen</h3><button class="close-x" onclick="closeScannerModal()">✕</button></div>
+    <div class="modal-body">
+      <div id="qr-reader" style="width:100%;border-radius:8px;overflow:hidden"></div>
+      <p class="hint">Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Adressbuch.</p>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeScannerModal()">Abbrechen</button></div>
+  `);
+  startScanner();
+}
+
+function startScanner(){
+  html5QrScanner = new Html5Qrcode('qr-reader');
+  html5QrScanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: 220 },
+    (decodedText) => onScanSuccess(decodedText),
+    () => { /* per-frame scan miss, ignore */ }
+  ).catch(() => {
+    showToast('Kamera konnte nicht gestartet werden — Berechtigung erteilt?');
+  });
+}
+
+function closeScannerModal(){
+  if(html5QrScanner){
+    html5QrScanner.stop().catch(() => {}).finally(() => { html5QrScanner = null; });
+  }
+  closeModal();
+}
+
+function onScanSuccess(decodedText){
+  if(html5QrScanner){ html5QrScanner.stop().catch(() => {}); html5QrScanner = null; }
+  closeModal();
+  const val = decodedText.trim();
+  let found = auftraege.find(a => a.zaehler && a.zaehler.trim() === val);
+  if(!found) found = auftraege.find(a => a.zaehler && a.zaehler.includes(val));
+  if(found){
+    openAuftragEditModal(found.id);
+    return;
+  }
+  const adrHit = adressbuch.find(e => e.zaehler && (e.zaehler.trim() === val || e.zaehler.includes(val)));
+  if(adrHit){
+    switchTab('adressbuch');
+    adrDetailsOpen[adrHit.id] = true;
+    render();
+    showToast('Im Adressbuch gefunden: ' + (adrHit.kundenname || adrHit.adresse));
+    return;
+  }
+  showToast('Kein Auftrag mit Zähler „' + val + '" gefunden');
+}
+
+/* ---------------------------------------------------------------
+   Sprachnotiz-Diktierfunktion (Web Speech API)
+--------------------------------------------------------------- */
+function startDictation(targetId){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    showToast('Diktierfunktion wird von diesem Browser nicht unterstützt (Chrome/Edge nutzen)');
+    return;
+  }
+  const btn = document.getElementById('dictate_' + targetId);
+  const recog = new SpeechRecognition();
+  recog.lang = 'de-DE';
+  recog.interimResults = false;
+  recog.maxAlternatives = 1;
+  if(btn){ btn.textContent = '🔴'; btn.title = 'Aufnahme läuft…'; }
+  recog.onresult = (event) => {
+    const text = event.results[0][0].transcript;
+    const el = document.getElementById(targetId);
+    if(el){ el.value = el.value ? el.value.trim() + ' ' + text : text; }
+  };
+  recog.onerror = () => { showToast('Diktat fehlgeschlagen oder Mikrofon nicht erlaubt'); };
+  recog.onend = () => { if(btn){ btn.textContent = '🎙️'; btn.title = 'Diktieren'; } };
+  try{ recog.start(); }catch(e){ showToast('Diktat konnte nicht gestartet werden'); }
+}
+
+/* ---------------------------------------------------------------
+   Mehrfachauswahl: Sammel-Bearbeitung + Routenplanung
+--------------------------------------------------------------- */
+function toggleSelect(tabKey, id){
+  const sel = selection[tabKey];
+  if(sel.has(id)) sel.delete(id); else sel.add(id);
+  render();
+}
+function toggleSelectAll(tabKey, checked){
+  const fullList = getFullListForTab(tabKey);
+  const list = applyFilters(fullList, tabKey);
+  const sel = selection[tabKey];
+  if(checked){ list.forEach(a => sel.add(a.id)); }
+  else{ list.forEach(a => sel.delete(a.id)); }
+  render();
+}
+function clearSelection(tabKey){
+  selection[tabKey].clear();
+  render();
+}
+
+function openBulkStatusModal(tabKey){
+  const count = selection[tabKey].size;
+  showModal(`
+    <div class="modal-head"><h3>Status für ${count} Aufträge ändern</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>Neuer Status</label>
+        <select id="bulkStatusSelect">
+          ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}">${v.label}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="applyBulkStatus('${tabKey}')">Anwenden</button>
+    </div>
+  `);
+}
+function applyBulkStatus(tabKey){
+  const newStatus = document.getElementById('bulkStatusSelect').value;
+  const ids = Array.from(selection[tabKey]);
+  ids.forEach(id => setStatus(id, newStatus, true));
+  selection[tabKey].clear();
+  closeModal();
+  render();
+  showToast(`Status für ${ids.length} Aufträge geändert`);
+}
+
+function haversineKm(lat1, lon1, lat2, lon2){
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI/180, dLon = (lon2-lon1) * Math.PI/180;
+  const aa = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(aa));
+}
+
+function planRouteForSelection(tabKey){
+  const ids = Array.from(selection[tabKey]);
+  const items = auftraege.filter(a => ids.includes(a.id) && a.koordinaten);
+  const skipped = ids.length - items.length;
+  if(items.length === 0){
+    showToast('Keine der ausgewählten Aufträge hat Koordinaten');
+    return;
+  }
+  if(skipped > 0) showToast(`${skipped} ohne Koordinaten werden übersprungen`);
+
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      (pos) => buildAndOpenRoute(items, { lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => buildAndOpenRoute(items, null),
+      { timeout: 6000 }
+    );
+  } else {
+    buildAndOpenRoute(items, null);
+  }
+}
+
+function buildAndOpenRoute(items, start){
+  const remaining = items.slice();
+  const route = [];
+  let current = start;
+  if(!current){
+    current = { lat: remaining[0].koordinaten.lat, lon: remaining[0].koordinaten.lon };
+    route.push(remaining.shift());
+  }
+  while(remaining.length){
+    let bestIdx = 0, bestDist = Infinity;
+    remaining.forEach((it, idx) => {
+      const dist = haversineKm(current.lat, current.lon, it.koordinaten.lat, it.koordinaten.lon);
+      if(dist < bestDist){ bestDist = dist; bestIdx = idx; }
+    });
+    const next = remaining.splice(bestIdx, 1)[0];
+    route.push(next);
+    current = { lat: next.koordinaten.lat, lon: next.koordinaten.lon };
+  }
+
+  const originParam = start ? `${start.lat},${start.lon}` : `${route[0].koordinaten.lat},${route[0].koordinaten.lon}`;
+  const destination = route[route.length - 1];
+  const destParam = `${destination.koordinaten.lat},${destination.koordinaten.lon}`;
+  const waypointItems = start ? route.slice(0, -1) : route.slice(1, -1);
+  const waypointsParam = waypointItems.map(it => `${it.koordinaten.lat},${it.koordinaten.lon}`).join('|');
+
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destParam}&travelmode=driving`;
+  if(waypointsParam) url += `&waypoints=${encodeURIComponent(waypointsParam)}`;
+  window.open(url, '_blank');
+}
+
+function navigateToAuftrag(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  let url;
+  if(a.koordinaten){
+    url = `https://www.google.com/maps/dir/?api=1&destination=${a.koordinaten.lat},${a.koordinaten.lon}`;
+  } else if(a.adresse){
+    url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(a.adresse)}`;
+  } else {
+    showToast('Keine Adresse oder Koordinaten hinterlegt');
+    return;
+  }
+  window.open(url, '_blank');
+}
+function searchPhoneForAuftrag(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  window.open(phoneSearchUrl(a.kundenname || a.kundencode, a.adresse), '_blank');
+}
+function openQuickPhoneEntry(auftragId){
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  showModal(`
+    <div class="modal-head"><h3>Telefonnummer eintragen</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field">
+        <label>${escapeHtml(a.kundenname || a.kundencode)}</label>
+        <input type="text" id="quickPhoneInput" placeholder="z.B. 0391 12345678" autofocus>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="saveQuickPhoneEntry('${auftragId}')">Speichern</button>
+    </div>
+  `);
+}
+function saveQuickPhoneEntry(auftragId){
+  const el = document.getElementById('quickPhoneInput');
+  const value = el ? el.value.trim() : '';
+  if(!value){ showToast('Bitte eine Nummer eingeben'); return; }
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  if(a.adrEntryId){
+    updateAdrField(a.adrEntryId, 'telefonnummer', value); // propagates to the Auftrag automatically
+  } else {
+    a.history.push({ ts: nowIso(), field:'telefonnummer', old:'', new: value });
+    a.telefonnummer = value;
+    saveAuftraege();
+  }
+  closeModal();
+  render();
+  showToast('Telefonnummer gespeichert');
+}
+function searchPhoneForAdr(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  window.open(phoneSearchUrl(e.kundenname || e.kundencode, e.adresse), '_blank');
+}
+function telHref(number){
+  return 'tel:' + (number||'').toString().replace(/[^0-9+]/g,'');
+}
+async function copyPhoneNumber(number){
+  try{
+    await navigator.clipboard.writeText(number);
+    showToast('Nummer kopiert: ' + number);
+  }catch(e){
+    showToast('Kopieren nicht möglich (Berechtigung?)');
+  }
+}
+function phoneButtonsHtml(number){
+  const safeJs = (number||'').toString().replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return `<a class="icon-btn" href="${telHref(number)}" title="Anrufen" style="text-decoration:none">📞</a>
+    <button class="icon-btn" onclick="copyPhoneNumber('${safeJs}')" title="Nummer kopieren">📋</button>`;
+}
+function telefonCellWithSearch(a){
+  const btn = !a.telefonnummer
+    ? `<button class="icon-btn" onclick="searchPhoneForAuftrag('${a.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`
+    : phoneButtonsHtml(a.telefonnummer);
+  return `<td data-label="${COLUMN_LABELS.telefonnummer}">
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="cell-input" type="text" value="${escapeHtml(a.telefonnummer)}"
+          onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1;min-width:90px">
+        ${btn}
+      </div>
+    </td>`;
+}
+function readonlyCell(a, key, label){
+  const val = a[key];
+  return `<td data-label="${label}"><span class="ro-value">${escapeHtml(val) || '<span class=\'muted\'>–</span>'}</span></td>`;
+}
+const CELL_RENDERERS = {
+  kundenname: (a) => readonlyCell(a, 'kundenname', COLUMN_LABELS.kundenname),
+  vorgang: (a) => `<td data-label="${COLUMN_LABELS.vorgang}">${escapeHtml(a.vorgang)}</td>`,
+  auftragsbeschreibung: (a) => `<td data-label="${COLUMN_LABELS.auftragsbeschreibung}"><span class="ro-value">${escapeHtml(a.auftragsbeschreibung) || '<span class=\'muted\'>–</span>'}</span></td>`,
+  status: (a) => `<td data-label="${COLUMN_LABELS.status}">
+      <select class="status-select ${STATUS[a.status].cls}" onchange="setStatus('${a.id}', this.value)">
+        ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
+      </select>
+    </td>`,
+  telefonnummer: (a) => telefonCellWithSearch(a),
+  email: (a) => readonlyCell(a, 'email', COLUMN_LABELS.email),
+  adresse: (a) => readonlyCell(a, 'adresse', COLUMN_LABELS.adresse),
+  standort: (a) => readonlyCell(a, 'standort', COLUMN_LABELS.standort),
+  zaehler: (a) => readonlyCell(a, 'zaehler', COLUMN_LABELS.zaehler),
+  bauform: (a) => readonlyCell(a, 'bauform', COLUMN_LABELS.bauform),
+  kommentar: (a) => `<td data-label="${COLUMN_LABELS.kommentar}">
+      <textarea class="cell-input" rows="1" onchange="updateAuftragField('${a.id}','kommentar', this.value)" placeholder="Notiz…">${escapeHtml(a.kommentar)}</textarea>
+    </td>`,
+  termin: (a) => `<td data-label="${COLUMN_LABELS.termin}">
+      ${a.termin ? `<span class="termin-chip">${a.termin.date} · ${a.termin.time}</span>` : `<span class="muted">–</span>`}
+    </td>`,
+  inbetriebnahmeDatum: (a) => `<td data-label="${COLUMN_LABELS.inbetriebnahmeDatum}">
+      <input class="cell-input" type="date" value="${escapeHtml(a.inbetriebnahmeDatum||'')}"
+        onchange="updateAuftragField('${a.id}','inbetriebnahmeDatum', this.value)">
+    </td>`,
+  koordinaten: (a) => `<td data-label="${COLUMN_LABELS.koordinaten}">
+      <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(a.koordinaten))}"
+        onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px">
+    </td>`,
+};
+
+function getCellRenderer(key){
+  if(CELL_RENDERERS[key]) return CELL_RENDERERS[key];
+  const cf = (settings.customFields||[]).find(c => c.key === key);
+  if(cf){
+    return (a) => `<td data-label="${escapeHtml(cf.label)}">
+      <input class="cell-input" type="text" value="${escapeHtml(a.customFields ? a.customFields[key] : '')}"
+        onchange="updateCustomField('${a.id}','${key}', this.value)" placeholder="–">
+    </td>`;
+  }
+  return null;
+}
+
+function getOrderedVisibleColumns(){
+  let order = (settings.columnOrder && settings.columnOrder.length) ? settings.columnOrder.slice() : DEFAULT_COLUMN_ORDER.slice();
+  const vc = settings.visibleColumns || DEFAULT_VISIBLE_COLUMNS;
+  (settings.customFields||[]).forEach(cf => { if(!order.includes(cf.key)) order.push(cf.key); });
+  return order.filter(k => vc[k] !== false && getCellRenderer(k));
+}
+
+function getColumnLabel(key){
+  if(COLUMN_LABELS[key]) return COLUMN_LABELS[key];
+  const cf = (settings.customFields||[]).find(c => c.key === key);
+  return cf ? cf.label : key;
+}
+
+function renderAuftragTable(list, isErledigtTab){
+  const tabKey = isErledigtTab ? 'erledigt' : 'offen';
+  if(list.length === 0){
+    return `<div class="empty-state">
+      <div class="big">${isErledigtTab ? 'Noch keine erledigten Vorgänge' : 'Keine offenen Vorgänge'}</div>
+      <div>${isErledigtTab ? 'Erledigte Aufträge erscheinen hier automatisch.' : 'Importiere eine CSV- oder Excel-Datei, um Vorgänge anzulegen.'}</div>
+    </div>`;
+  }
+  const cols = getOrderedVisibleColumns();
+  const sel = selection[tabKey];
+  const allChecked = list.every(a => sel.has(a.id));
+
+  const rows = list.slice().sort((a,b) => (a.kundencode||'').localeCompare(b.kundencode||'')).map(a => `
+    <tr>
+      <td data-label="Auswahl"><input type="checkbox" ${sel.has(a.id)?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"></td>
+      <td data-label="Kundencode"><span class="code-sm">${escapeHtml(a.kundencode)}</span></td>
+      ${cols.map(key => getCellRenderer(key)(a)).join('')}
+      <td data-label="Aktionen">
+        <div class="row-actions">
+          <button class="icon-btn" onclick="openAuftragEditModal('${a.id}')" title="Bearbeiten">✏️</button>
+          <button class="icon-btn" onclick="navigateToAuftrag('${a.id}')" title="Navigation">🧭</button>
+          <button class="icon-btn" onclick="openTerminModal('${a.id}')" title="Termin festlegen">📅</button>
+          <button class="icon-btn" onclick="openAuftragHistory('${a.id}')" title="Verlauf">🕒</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  const headCells = [`<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll('${tabKey}', this.checked)"></th>`, '<th>Kundencode</th>']
+    .concat(cols.map(key => `<th>${getColumnLabel(key)}</th>`))
+    .concat(['<th></th>'])
+    .join('');
+
+  return `<div class="grid-wrap"><table>
+    <thead><tr>${headCells}</tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+let adrSearch = '';
+let adrMapInstance = null;
+let adrDetailsOpen = {};
+
+function setAdrSearch(value){
+  adrSearch = value;
+  const el = document.getElementById('adrSearchInput');
+  const cursorPos = el ? el.selectionStart : null;
+  document.getElementById('view-adressbuch').innerHTML = renderAdressbuch();
+  const newEl = document.getElementById('adrSearchInput');
+  if(newEl){ newEl.focus(); if(cursorPos !== null) newEl.setSelectionRange(cursorPos, cursorPos); }
+}
+function setAdrViewMode(mode){
+  adrViewMode = mode;
+  document.getElementById('view-adressbuch').innerHTML = renderAdressbuch();
+}
+
+function initAdrMap(entries){
+  const withCoords = entries.filter(e => e.koordinaten);
+  const el = document.getElementById('map-adressbuch');
+  if(!el) return;
+  if(adrMapInstance){ adrMapInstance.remove(); adrMapInstance = null; }
+
+  if(withCoords.length === 0){
+    el.outerHTML = `<div class="map-empty">Keine Koordinaten im Adressbuch vorhanden.</div>`;
+    return;
+  }
+
+  const map = L.map('map-adressbuch');
+  adrMapInstance = map;
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19
+  }).addTo(map);
+
+  const cluster = L.markerClusterGroup({ maxClusterRadius: 50 });
+  const bounds = [];
+  withCoords.forEach(e => {
+    const marker = L.marker([e.koordinaten.lat, e.koordinaten.lon]);
+    marker.bindPopup(`
+      <div class="pop-code">${escapeHtml(e.kundenname || e.kundencode || 'Messpunkt')}</div>
+      ${e.adresse ? `<div style="margin-top:4px">${escapeHtml(e.adresse)}</div>` : ''}
+      ${e.zaehlerplatzId ? `<div class="muted" style="font-family:var(--font-mono);font-size:11px">${escapeHtml(e.zaehlerplatzId)}</div>` : ''}
+      ${e.telefonnummer ? `<div class="muted">${escapeHtml(e.telefonnummer)}</div>` : ''}
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button class="btn small" onclick="navigateToAdr('${e.id}')" style="flex:1">🧭 Navigation</button>
+        <button class="btn small primary" onclick="jumpToAdressbuchEntry('${e.id}')" style="flex:1">✏️ Öffnen</button>
+      </div>
+    `);
+    cluster.addLayer(marker);
+    bounds.push([e.koordinaten.lat, e.koordinaten.lon]);
+  });
+  map.addLayer(cluster);
+  map.fitBounds(bounds, { padding: [30,30] });
+}
+
+function navigateToAdr(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  let url;
+  if(e.koordinaten) url = `https://www.google.com/maps/dir/?api=1&destination=${e.koordinaten.lat},${e.koordinaten.lon}`;
+  else if(e.adresse) url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(e.adresse)}`;
+  else { showToast('Keine Adresse oder Koordinaten hinterlegt'); return; }
+  window.open(url, '_blank');
+}
+
+function jumpToAdressbuchEntry(id){
+  adrViewMode = 'liste';
+  adrDetailsOpen[id] = true;
+  render();
+  // scroll the entry into view once the list is rendered
+  setTimeout(() => {
+    const el = document.getElementById('adrSearchInput');
+    if(el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+  }, 50);
+}
+
+function toggleAdrDetails(id){
+  adrDetailsOpen[id] = !adrDetailsOpen[id];
+  document.getElementById('view-adressbuch').innerHTML = renderAdressbuch();
+}
+
+let adrViewMode = 'liste';
+
+function renderAdressbuch(){
+  if(adressbuch.length === 0){
+    return `<div class="empty-state">
+      <div class="big">Adressbuch ist leer</div>
+      <div>Einträge entstehen automatisch beim Import und bleiben dauerhaft erhalten.</div>
+    </div>`;
+  }
+  const q = adrSearch.trim().toLowerCase();
+  const filtered = !q ? adressbuch : adressbuch.filter(e => {
+    const haystack = [e.adresse, e.kundenname, e.zaehlerplatzId, e.kundencode].map(v=>(v||'').toString().toLowerCase()).join(' ');
+    return haystack.includes(q);
+  });
+
+  const searchBar = `
+    <div class="filter-bar">
+      <input type="text" id="adrSearchInput" class="filter-search" placeholder="Suchen nach Ort, Ortsteil, Straße oder Name…"
+        value="${escapeHtml(adrSearch)}" oninput="setAdrSearch(this.value)">
+      ${filtered.length !== adressbuch.length ? `<span class="count-pill">${filtered.length} von ${adressbuch.length}</span>` : ''}
+    </div>`;
+
+  const toggleHtml = `
+    <div class="view-toggle">
+      <button class="btn small ${adrViewMode==='liste'?'active':''}" onclick="setAdrViewMode('liste')">📋 Liste</button>
+      <button class="btn small ${adrViewMode==='karte'?'active':''}" onclick="setAdrViewMode('karte')">🗺️ Karte</button>
+    </div>`;
+
+  if(filtered.length === 0){
+    return searchBar + toggleHtml + `<div class="empty-state"><div class="big">Keine Treffer</div><div>Versuch einen anderen Suchbegriff.</div></div>`;
+  }
+
+  if(adrViewMode === 'karte'){
+    setTimeout(() => initAdrMap(filtered), 0);
+    return searchBar + toggleHtml + `<div id="map-adressbuch" style="height:560px;border-radius:10px;overflow:hidden;border:1px solid var(--line)"></div>`;
+  }
+
+  if(adrMapInstance){ adrMapInstance.remove(); adrMapInstance = null; }
+
+  const cards = filtered.slice().sort((a,b)=>(a.adresse||'').localeCompare(b.adresse||'')).map(e => {
+    const detailsOpen = !!adrDetailsOpen[e.id];
+    return `
+    <div class="adr-card">
+      <div class="adr-card-main">
+        <input class="adr-name-input" type="text" value="${escapeHtml(e.kundenname)}" placeholder="Kundenname"
+          onchange="updateAdrField('${e.id}','kundenname', this.value)">
+        <input class="adr-addr-input" type="text" value="${escapeHtml(e.adresse)}" placeholder="Adresse"
+          onchange="updateAdrField('${e.id}','adresse', this.value)">
+        <input class="adr-phone-input" type="text" value="${escapeHtml(e.telefonnummer)}" placeholder="Telefonnummer"
+          onchange="updateAdrField('${e.id}','telefonnummer', this.value)">
+      </div>
+      <div class="adr-card-actions">
+        ${e.telefonnummer
+          ? phoneButtonsHtml(e.telefonnummer)
+          : `<button class="icon-btn" onclick="searchPhoneForAdr('${e.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`}
+        <button class="icon-btn" onclick="toggleAdrDetails('${e.id}')" title="Details">${detailsOpen ? '▲' : '▼'}</button>
+        <button class="icon-btn" onclick="openAdrHistory('${e.id}')" title="Verlauf">🕒 ${e.history.length}</button>
+      </div>
+      ${detailsOpen ? `
+        <div class="adr-card-details">
+          <div class="field"><label>E-Mail</label><input class="cell-input" type="text" value="${escapeHtml(e.email||'')}" onchange="updateAdrField('${e.id}','email', this.value)"></div>
+          <div class="field-row">
+            <div class="field"><label>Zählerplatz-ID</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehlerplatzId||'')}" onchange="updateAdrField('${e.id}','zaehlerplatzId', this.value)" style="font-family:var(--font-mono);font-size:12px"></div>
+            <div class="field"><label>Standort</label><input class="cell-input" type="text" value="${escapeHtml(e.standort||'')}" onchange="updateAdrField('${e.id}','standort', this.value)"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehler||'')}" onchange="updateAdrField('${e.id}','zaehler', this.value)"></div>
+            <div class="field"><label>Bauform Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.bauform||'')}" onchange="updateAdrField('${e.id}','bauform', this.value)"></div>
+          </div>
+          <div class="field"><label>Koordinaten</label><input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="font-family:var(--font-mono);font-size:12px"></div>
+          <p class="hint">Kundencode: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
+        </div>` : ''}
+    </div>`;
+  }).join('');
+
+  return searchBar + toggleHtml + `<div class="adr-card-list">${cards}</div>`;
+}
+function updateAdrCoordsField(entryId, value){
+  if(!value.trim()){ updateAdrCoords(entryId, null); render(); return; }
+  const parsed = parseCoords(value);
+  if(!parsed){ showToast('Ungültiges Koordinatenformat, z.B. 52.130, 11.630'); render(); return; }
+  updateAdrCoords(entryId, parsed);
+  showToast('Gespeichert');
+}
+
+/* ---------------------------------------------------------------
+   Field updates
+--------------------------------------------------------------- */
+function updateCustomField(id, key, value, silent){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  if(!a.customFields) a.customFields = {};
+  const oldVal = a.customFields[key] || '';
+  if(oldVal === value) return;
+  a.history.push({ ts: nowIso(), field: key, old: oldVal, new: value });
+  a.customFields[key] = value;
+  saveAuftraege();
+  if(!silent) showToast('Gespeichert');
+}
+
+function updateAuftragField(id, field, value, silent){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  const oldVal = a[field] || '';
+  if(oldVal === value) return;
+  a.history.push({ ts: nowIso(), field, old: oldVal, new: value });
+  a[field] = value;
+  saveAuftraege();
+
+  // propagate persistent customer/meter fields into address book
+  const propagatedFields = ['telefonnummer','email','adresse','kundenname','zaehler','bauform','standort'];
+  if(propagatedFields.includes(field) && a.adrEntryId){
+    updateAdrField(a.adrEntryId, field, value);
+  }
+  if(!silent) showToast('Gespeichert');
+}
+
+function setStatus(id, newStatus, silent){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  const old = a.status;
+  if(old === newStatus) return;
+  a.history.push({ ts: nowIso(), field:'status', old: STATUS[old].label, new: STATUS[newStatus].label });
+  a.status = newStatus;
+  saveAuftraege();
+  if(!silent){
+    render();
+    showToast(newStatus === 'erledigt' ? 'Als erledigt markiert' : 'Status aktualisiert');
+  }
+}
+
+/* ---------------------------------------------------------------
+   History modals
+--------------------------------------------------------------- */
+/* ---------------------------------------------------------------
+   Auftrag edit modal (from table ✏️ or map popup)
+--------------------------------------------------------------- */
+function openAuftragEditModal(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+
+  const infoRow = (icon, label, value) => value
+    ? `<div class="ro-info-item"><span class="ro-info-label">${icon} ${label}</span><span class="ro-info-val">${escapeHtml(value)}</span></div>`
+    : '';
+
+  showModal(`
+    <div class="modal-head">
+      <h3><span class="code-sm">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.vorgang)}</h3>
+      <button class="close-x" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="photoArea" style="margin-bottom:14px">Lädt…</div>
+      <div class="ro-info-grid">
+        ${infoRow('👤', '', a.kundenname)}
+        ${infoRow('📍', '', a.adresse)}
+        ${infoRow('🏷️', '', a.standort)}
+        ${infoRow('🔢', '', a.zaehler)}
+        ${infoRow('🔧', '', a.bauform)}
+        ${infoRow('✉️', '', a.email)}
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>📌 Koordinaten</label>
+          <input type="text" id="edit_koordinaten_display" value="${escapeHtml(fmtCoords(a.koordinaten))}"
+            onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:13px">
+        </div>
+        <div class="field">
+          <label>📞 Telefon</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="edit_telefonnummer_display" value="${escapeHtml(a.telefonnummer)}"
+              onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1">
+            ${a.telefonnummer ? phoneButtonsHtml(a.telefonnummer) : `<button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍</button>`}
+          </div>
+        </div>
+      </div>
+      ${a.auftragsbeschreibung ? `<div class="field"><label>Auftragsbeschreibung</label><p class="ro-value" style="white-space:pre-line">${escapeHtml(a.auftragsbeschreibung)}</p></div>` : ''}
+
+      <div class="field-row">
+        <div class="field">
+          <label>Status</label>
+          <select id="edit_status">
+            ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Inbetriebnahme am</label>
+          <input type="date" id="edit_inbetriebnahmeDatum" value="${escapeHtml(a.inbetriebnahmeDatum||'')}">
+        </div>
+      </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;justify-content:space-between">
+          Notiz
+          <button type="button" class="icon-btn" id="dictate_edit_kommentar" onclick="startDictation('edit_kommentar')" title="Diktieren">🎙️</button>
+        </label>
+        <textarea id="edit_kommentar" rows="3">${escapeHtml(a.kommentar||'')}</textarea>
+      </div>
+      <div class="field">
+        <label>📞 Wiedervorlage</label>
+        <div class="settings-row" style="margin-bottom:6px">
+          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 2)">+2 Tage</button>
+          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 7)">+1 Woche</button>
+          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 14)">+2 Wochen</button>
+        </div>
+        <div class="field-row" style="align-items:center">
+          <input type="date" id="edit_wiedervorlage_datum" value="${escapeHtml(a.wiedervorlage ? a.wiedervorlage.datum : '')}" style="flex:2">
+          <input type="time" id="edit_wiedervorlage_zeit" value="${escapeHtml(a.wiedervorlage ? (a.wiedervorlage.zeit||'09:00') : '09:00')}" style="flex:1">
+          <button class="icon-btn" onclick="saveWiedervorlageFromModal('${a.id}')" title="Speichern">✓</button>
+          ${a.wiedervorlage ? `<button class="icon-btn" onclick="clearWiedervorlage('${a.id}')" title="Entfernen">🗑</button>` : ''}
+        </div>
+      </div>
+      ${renderCustomFieldInputs(a)}
+      ${a.termin ? `<p class="hint">📅 <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
+      <div class="settings-row" style="margin-top:6px">
+        <button class="btn small" onclick="navigateToAuftrag('${a.id}')">🧭 Navigation</button>
+        <button class="btn small" onclick="openTerminModal('${a.id}')">📅 Termin</button>
+        <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
+        <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Adressbuch</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Schließen</button>
+      <button class="btn primary" onclick="saveAuftragEditModal('${a.id}')">Speichern</button>
+    </div>
+  `);
+  refreshPhotoArea(id);
+}
+
+/* ---------------------------------------------------------------
+   Wiedervorlage / Rückruf-Erinnerung
+--------------------------------------------------------------- */
+function setWiedervorlageQuick(auftragId, daysFromNow){
+  const d = new Date();
+  d.setDate(d.getDate() + daysFromNow);
+  const iso = d.toISOString().slice(0,10);
+  const datumEl = document.getElementById('edit_wiedervorlage_datum');
+  const zeitEl = document.getElementById('edit_wiedervorlage_zeit');
+  if(datumEl) datumEl.value = iso;
+  const zeit = (zeitEl && zeitEl.value) ? zeitEl.value : '09:00';
+  if(zeitEl) zeitEl.value = zeit;
+  saveWiedervorlage(auftragId, iso, zeit);
+}
+function saveWiedervorlageFromModal(auftragId){
+  const datumEl = document.getElementById('edit_wiedervorlage_datum');
+  const zeitEl = document.getElementById('edit_wiedervorlage_zeit');
+  const datum = datumEl ? datumEl.value : '';
+  const zeit = (zeitEl && zeitEl.value) ? zeitEl.value : '09:00';
+  if(!datum){ showToast('Bitte ein Datum wählen'); return; }
+  saveWiedervorlage(auftragId, datum, zeit);
+}
+function clearWiedervorlage(auftragId){
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a || !a.wiedervorlage) return;
+  a.history.push({ ts: nowIso(), field:'wiedervorlage', old: fmtDateDe(a.wiedervorlage.datum) + ' ' + a.wiedervorlage.zeit, new: 'entfernt' });
+  a.wiedervorlage = null;
+  saveAuftraege();
+  render();
+  showToast('Rückruf-Erinnerung entfernt');
+}
+function saveWiedervorlage(auftragId, datum, zeit){
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  const oldVal = a.wiedervorlage ? (fmtDateDe(a.wiedervorlage.datum) + ' ' + a.wiedervorlage.zeit) : '';
+  const newVal = fmtDateDe(datum) + ' ' + zeit;
+  if(oldVal === newVal) return;
+  a.history.push({ ts: nowIso(), field:'wiedervorlage', old: oldVal, new: newVal });
+  a.wiedervorlage = { datum, zeit };
+  saveAuftraege();
+  render();
+  showToast('Rückruf-Erinnerung gesetzt: ' + newVal);
+}
+
+function renderCustomFieldInputs(a){
+  const custom = settings.customFields || [];
+  if(custom.length === 0) return '';
+  return custom.map(cf => `
+    <div class="field">
+      <label>${escapeHtml(cf.label)}</label>
+      <input type="text" id="edit_cf_${cf.key}" value="${escapeHtml(a.customFields ? (a.customFields[cf.key]||'') : '')}">
+    </div>`).join('');
+}
+
+function jumpToAdressbuch(entryId){
+  closeModal();
+  switchTab('adressbuch');
+  if(entryId){ adrDetailsOpen[entryId] = true; }
+  render();
+}
+
+function saveAuftragEditModal(id){
+  const keys = ['inbetriebnahmeDatum'];
+  keys.forEach(k => {
+    const el = document.getElementById('edit_'+k);
+    if(el) updateAuftragField(id, k, el.value, true);
+  });
+  const kommentarEl = document.getElementById('edit_kommentar');
+  if(kommentarEl) updateAuftragField(id, 'kommentar', kommentarEl.value, true);
+  const statusEl = document.getElementById('edit_status');
+  if(statusEl) setStatus(id, statusEl.value, true);
+  (settings.customFields||[]).forEach(cf => {
+    const el = document.getElementById('edit_cf_'+cf.key);
+    if(el) updateCustomField(id, cf.key, el.value, true);
+  });
+  closeModal();
+  render();
+  showToast('Gespeichert');
+}
+
+/* ---------------------------------------------------------------
+   History modals
+--------------------------------------------------------------- */
+function historyHtml(history){
+  if(!history || history.length === 0) return '<p class="hint">Kein Verlauf vorhanden.</p>';
+  const items = history.slice().reverse().map(h => `
+    <li><span class="ts">${fmtTs(h.ts)}</span> — <strong>${escapeHtml(h.field)}</strong>:
+      ${h.old ? `„${escapeHtml(h.old)}“ → ` : ''}„${escapeHtml(h.new)}“
+    </li>
+  `).join('');
+  return `<ul class="history-list">${items}</ul>`;
+}
+function openAuftragHistory(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  showModal(`
+    <div class="modal-head"><h3>Verlauf · ${escapeHtml(a.kundencode)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">${historyHtml(a.history)}</div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Schließen</button></div>
+  `);
+}
+function openAdrHistory(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  showModal(`
+    <div class="modal-head"><h3>Verlauf · ${escapeHtml(e.adresse || e.zaehlerplatzId || 'Adressbuch')}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">${historyHtml(e.history)}</div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Schließen</button></div>
+  `);
+}
+
+/* ---------------------------------------------------------------
+   Termin modal + ICS generation
+--------------------------------------------------------------- */
+function openTerminModal(id){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  terminModalAuftragId = id;
+  const today = new Date().toISOString().slice(0,10);
+  showModal(`
+    <div class="modal-head"><h3>Termin festlegen · ${escapeHtml(a.kundencode)}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-row">
+        <div class="field"><label>Datum</label><input type="date" id="terminDate" value="${a.termin ? a.termin.dateIso : today}"></div>
+        <div class="field"><label>Uhrzeit</label><input type="time" id="terminTime" value="${a.termin ? a.termin.time : '09:00'}"></div>
+        <div class="field" style="max-width:120px"><label>Dauer (Min.)</label><input type="number" id="terminDuration" value="${a.termin ? a.termin.duration : 60}" min="15" step="15"></div>
+      </div>
+      <div class="field">
+        <label>Betreff</label>
+        <input type="text" id="terminSubject" value="${escapeHtml(a.vorgang)}">
+      </div>
+      <div class="field">
+        <label>Ort</label>
+        <input type="text" id="terminLocation" value="${escapeHtml(a.adresse)}">
+      </div>
+      <div class="field">
+        <label>Teilnehmer-E-Mail (optional)</label>
+        <input type="email" id="terminAttendee" value="" placeholder="kunde@beispiel.de">
+        <p class="hint">Standardmäßig wird eine normale Kalenderdatei erzeugt, die du beim Öffnen direkt in deinen Kalender übernimmst — ohne dass irgendwas automatisch an eine E-Mail-Adresse geht. Nur wenn du hier selbst eine Adresse einträgst, wird stattdessen eine Termineinladung erzeugt, die du nach dem Öffnen in Outlook noch senden musst.</p>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="generateIcs()">Termindatei erzeugen</button>
+    </div>
+  `);
+}
+
+function pad(n){ return n.toString().padStart(2,'0'); }
+
+function generateIcs(){
+  const a = auftraege.find(x => x.id === terminModalAuftragId);
+  if(!a) return;
+  const dateIso = document.getElementById('terminDate').value;
+  const time = document.getElementById('terminTime').value;
+  const duration = parseInt(document.getElementById('terminDuration').value, 10) || 60;
+  const subject = document.getElementById('terminSubject').value || 'Termin';
+  const location = document.getElementById('terminLocation').value || '';
+  const attendee = document.getElementById('terminAttendee').value.trim();
+
+  if(!dateIso || !time){ showToast('Bitte Datum und Uhrzeit angeben'); return; }
+  if(!settings.organizerEmail){
+    showToast('Bitte zuerst deine Absenderadresse hinterlegen');
+    openSettingsModal();
+    return;
+  }
+
+  const [y,mo,d] = dateIso.split('-').map(n=>parseInt(n,10));
+  const [hh,mm] = time.split(':').map(n=>parseInt(n,10));
+  const start = new Date(y, mo-1, d, hh, mm, 0);
+  const end = new Date(start.getTime() + duration*60000);
+
+  const dtStart = `${start.getFullYear()}${pad(start.getMonth()+1)}${pad(start.getDate())}T${pad(start.getHours())}${pad(start.getMinutes())}00`;
+  const dtEnd = `${end.getFullYear()}${pad(end.getMonth()+1)}${pad(end.getDate())}T${pad(end.getHours())}${pad(end.getMinutes())}00`;
+  const dtStamp = new Date().toISOString().replace(/[-:]/g,'').split('.')[0] + 'Z';
+  const eventUid = (a.termin && a.termin.uid) ? a.termin.uid : (uid() + '@auftragsmappe');
+  const seq = (a.termin && typeof a.termin.sequence === 'number') ? a.termin.sequence + 1 : 0;
+
+  const descLines = [];
+  if(a.kundenname) descLines.push('Kunde: ' + a.kundenname);
+  if(a.telefonnummer) descLines.push('Telefon: ' + a.telefonnummer);
+  if(a.zaehler) descLines.push('Zähler: ' + a.zaehler);
+  if(a.auftragsbeschreibung) descLines.push('Beschreibung: ' + a.auftragsbeschreibung);
+  if(a.kommentar) descLines.push('Notiz: ' + a.kommentar);
+  const description = descLines.join(String.fromCharCode(10));
+
+  const method = attendee ? 'REQUEST' : 'PUBLISH';
+  let icsLines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Auftragsmappe//DE',
+    'CALSCALE:GREGORIAN',
+    'METHOD:' + method,
+    'BEGIN:VEVENT',
+    'UID:' + eventUid,
+    'DTSTAMP:' + dtStamp,
+    'DTSTART:' + dtStart,
+    'DTEND:' + dtEnd,
+    'SUMMARY:' + icsEscape(subject),
+    'LOCATION:' + icsEscape(location),
+    'DESCRIPTION:' + icsEscape(description),
+    'ORGANIZER;CN=' + icsEscape(settings.organizerEmail) + ':mailto:' + settings.organizerEmail,
+  ];
+  if(attendee){
+    icsLines.push('ATTENDEE;CN=' + icsEscape(a.kundencode) + ';RSVP=TRUE:mailto:' + attendee);
+  }
+  icsLines.push('STATUS:CONFIRMED');
+  icsLines.push('SEQUENCE:' + seq);
+  icsLines.push('END:VEVENT');
+  icsLines.push('END:VCALENDAR');
+
+  const icsContent = icsLines.join('\r\n');
+  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  const fileStamp = `${y}${pad(mo)}${pad(d)}_${pad(hh)}${pad(mm)}_${Date.now().toString().slice(-4)}`;
+  link.download = `Termin_${(a.kundencode||'auftrag').replace(/[^a-z0-9]/gi,'_')}_${fileStamp}.ics`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  const oldTermin = a.termin ? `${a.termin.date} ${a.termin.time}` : '';
+  a.termin = { dateIso, date: `${pad(d)}.${pad(mo)}.${y}`, time, duration, uid: eventUid, sequence: seq };
+  a.history.push({ ts: nowIso(), field:'termin', old: oldTermin, new: `${a.termin.date} ${a.termin.time}` });
+  if(a.status === 'offen'){
+    a.history.push({ ts: nowIso(), field:'status', old: STATUS.offen.label, new: STATUS.termin_vereinbart.label });
+    a.status = 'termin_vereinbart';
+  }
+  saveAuftraege();
+  closeModal();
+  render();
+  showToast(attendee
+    ? 'Termindatei heruntergeladen – öffnen und in Outlook senden'
+    : 'Termindatei heruntergeladen – öffnen, um sie in den Kalender zu übernehmen');
+}
+
+function icsEscape(s){
+  return (s||'').toString().replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
+}
+
+/* ---------------------------------------------------------------
+   Init
+--------------------------------------------------------------- */
+(async function init(){
+  await loadAll();
+  await tryRestoreFolder();
+  render();
+})();
+
+if('serviceWorker' in navigator && location.protocol !== 'file:'){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
