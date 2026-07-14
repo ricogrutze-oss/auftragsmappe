@@ -402,6 +402,12 @@
     padding:10px 14px; background:var(--teal-deep); color:#fff; border-radius:10px; margin-bottom:12px;
   }
   .selection-bar .btn{ background:#fff; }
+  .reconnect-banner{
+    background:var(--red); color:#fff; padding:10px 20px;
+    display:flex; align-items:center; justify-content:center; gap:12px;
+    font-size:13.5px; font-weight:600; flex-wrap:wrap; text-align:center;
+  }
+  .reconnect-banner .btn{ background:#fff; color:var(--red); border:none; }
   .adr-card-list{ display:flex; flex-direction:column; gap:10px; }
   .adr-card{
     background:var(--panel); border:1px solid var(--line); border-radius:10px;
@@ -486,6 +492,8 @@
   <div class="eyebrow">Kundenvorgänge · Adressbuch · Termine</div>
   <div class="app-title">Auftragsmappe <span class="stamp" id="orgEmailStamp">Absender nicht gesetzt</span></div>
 </header>
+
+<div id="reconnectBanner" style="display:none"></div>
 
 <div class="tabs">
   <div class="tab active" data-tab="offen" onclick="switchTab('offen')" title="Offene Aufträge">📋 <span class="n" id="tabCountOffen">0</span></div>
@@ -796,6 +804,20 @@ async function chooseFolder(){
     showToast('Datei verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
   }catch(e){ /* user cancelled the picker */ }
 }
+function updateReconnectBanner(){
+  const el = document.getElementById('reconnectBanner');
+  if(!el) return;
+  if(folderHandle && folderNeedsPermission){
+    el.style.display = '';
+    el.innerHTML = `<div class="reconnect-banner">
+      ⚠️ Verbindung zur Sicherungsdatei muss erneuert werden — aktuelle Daten wurden noch nicht geladen!
+      <button class="btn small" onclick="reconnectFolder()">🔄 Jetzt verbinden</button>
+    </div>`;
+  } else {
+    el.style.display = 'none';
+    el.innerHTML = '';
+  }
+}
 async function reconnectFolder(){
   if(!folderHandle) return;
   try{
@@ -857,11 +879,19 @@ function scheduleFolderSync(){
    Address book helpers
 --------------------------------------------------------------- */
 function findAdrEntry(zaehlerplatzId, kundencode, adresse, zaehler){
-  // Kundencode alone decides duplicates for the address book. Rows without a
-  // Kundencode can't be reliably matched against anything, so they always
-  // become a new entry rather than risk a wrong merge.
-  if(!kundencode) return null;
-  return adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
+  // Kundencode is the primary key when present.
+  if(kundencode){
+    const hit = adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
+    if(hit) return hit;
+  }
+  // Fallback: match on Zähler(-nummer) alone. This is what lets a manually
+  // created entry (just Zähler + Standort, no Kundencode yet) get "found"
+  // and enriched once an import row with the same Zähler brings a Kundencode.
+  if(zaehler){
+    const hit = adressbuch.find(a => a.zaehler && norm(a.zaehler) === norm(zaehler));
+    if(hit) return hit;
+  }
+  return null;
 }
 function upsertAdrFromImport(row){
   let entry = findAdrEntry(row.zaehlerplatzId, row.kundencode, row.adresse, row.zaehler);
@@ -875,6 +905,7 @@ function upsertAdrFromImport(row){
       telefonnummer: row.telefonnummer || '',
       email: row.email || '',
       koordinaten: row.koordinaten || null,
+      koordinatenAktualisiertAm: row.koordinaten ? todayDe() : '',
       zaehler: row.zaehler || '',
       bauform: row.bauform || '',
       standort: row.standort || '',
@@ -906,9 +937,45 @@ function upsertAdrFromImport(row){
     mergeField('zaehler');
     mergeField('bauform');
     mergeField('standort');
-    if(!entry.koordinaten && row.koordinaten) entry.koordinaten = row.koordinaten;
+    // Kundencode/Zählerplatz-ID only ever get filled in when missing (e.g. a
+    // manually created entry with just Zähler+Standort gets "enriched" once
+    // an import row with the same Zähler brings the Kundencode along) —
+    // never combined, since that's meant to be a single stable identifier.
+    if(!entry.kundencode && row.kundencode){
+      entry.kundencode = row.kundencode;
+      entry.history.push({ ts: nowIso(), field:'kundencode', old:'', new: row.kundencode + ' (automatisch ergänzt)' });
+    }
+    if(!entry.zaehlerplatzId && row.zaehlerplatzId) entry.zaehlerplatzId = row.zaehlerplatzId;
+    if(!entry.koordinaten && row.koordinaten){
+      entry.koordinaten = row.koordinaten;
+      entry.koordinatenAktualisiertAm = todayDe();
+    }
   }
   return entry;
+}
+function todayDe(){
+  const d = new Date();
+  return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+}
+function fmtHistoryDate(ts){
+  const d = new Date(ts);
+  return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+}
+function lastFieldUpdateStr(entity, fieldName){
+  if(!entity || !entity.history) return '';
+  const entries = entity.history.filter(h => h.field === fieldName);
+  if(entries.length === 0) return '';
+  return fmtHistoryDate(entries[entries.length-1].ts);
+}
+function fieldUpdateHint(entity, fieldName){
+  const d = lastFieldUpdateStr(entity, fieldName);
+  return d ? `<p class="hint" style="margin:4px 0 0">Zuletzt geändert am ${d}</p>` : '';
+}
+function mostRecentUpdateStr(entity){
+  if(!entity || !entity.history || entity.history.length === 0) return '';
+  const real = entity.history.filter(h => h.field !== 'angelegt');
+  if(real.length === 0) return '';
+  return fmtHistoryDate(real[real.length-1].ts);
 }
 function updateAuftragCoords(id, value){
   const a = auftraege.find(x => x.id === id);
@@ -918,6 +985,7 @@ function updateAuftragCoords(id, value){
     if(!a.koordinaten) return;
     a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: '' });
     a.koordinaten = null;
+    a.koordinatenAktualisiertAm = '';
     saveAuftraege();
     updateAdrCoords(ensureAdrEntryForAuftrag(a).id, null);
     render();
@@ -931,6 +999,7 @@ function updateAuftragCoords(id, value){
   }
   a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: fmtCoords(parsed) });
   a.koordinaten = parsed;
+  a.koordinatenAktualisiertAm = todayDe();
   saveAuftraege();
   updateAdrCoords(ensureAdrEntryForAuftrag(a).id, parsed);
   showToast('Gespeichert');
@@ -968,6 +1037,7 @@ function updateAdrCoords(entryId, coords){
   if(oldStr === newStr) return;
   entry.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: newStr });
   entry.koordinaten = coords;
+  entry.koordinatenAktualisiertAm = coords ? todayDe() : '';
   saveAdressbuch();
 
   const linked = auftraege.filter(a => a.adrEntryId === entryId);
@@ -975,6 +1045,7 @@ function updateAdrCoords(entryId, coords){
     linked.forEach(a => {
       a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: newStr });
       a.koordinaten = coords;
+      a.koordinatenAktualisiertAm = coords ? todayDe() : '';
     });
     saveAuftraege();
   }
@@ -1004,6 +1075,12 @@ function updateAdrField(entryId, field, newVal){
 /* ---------------------------------------------------------------
    File Import (CSV/TSV via PapaParse, Excel/ODS via SheetJS)
 --------------------------------------------------------------- */
+let importAdrOnlyMode = false;
+function startImport(adrOnly){
+  importAdrOnlyMode = adrOnly;
+  document.getElementById('csvInput').click();
+}
+
 document.getElementById('csvInput').addEventListener('change', function(e){
   const file = e.target.files[0];
   if(!file) return;
@@ -1150,8 +1227,8 @@ function confirmMapping(manual){
     const el = document.getElementById('map_'+f);
     mapping[f] = el ? el.value : '';
   }
-  if(!mapping.kundencode || !mapping.vorgang){
-    showToast('Kundencode und Vorgang müssen zugeordnet werden');
+  if(!mapping.kundencode || (!mapping.vorgang && !importAdrOnlyMode)){
+    showToast(importAdrOnlyMode ? 'Kundencode muss zugeordnet werden' : 'Kundencode und Vorgang müssen zugeordnet werden');
     return;
   }
   columnMapping = mapping;
@@ -1259,9 +1336,9 @@ function runImport(){
     // not just ones with a currently open order.
     const adrEntry = upsertAdrFromImport({ kundencode, vorgang, telefonnummer, email, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort });
 
-    if(!vorgang.trim() || !kundencode.trim()){
+    if(importAdrOnlyMode || !vorgang.trim() || !kundencode.trim()){
       adrOnly++;
-      continue; // no Auftragstyp and/or Kundencode on this row → address book updated, but no Auftrag created
+      continue; // Adressbuch-only mode, or no Auftragstyp/Kundencode → address book updated, but no Auftrag created
     }
 
     const key = norm(kundencode) + '|' + norm(vorgang);
@@ -1317,20 +1394,84 @@ function runImport(){
 
   saveAuftraege();
   saveAdressbuch();
-  settings.lastImport = { ts: nowIso(), added, updatedExisting, skippedDup, skippedEmpty, adrOnly };
+  settings.lastImport = { ts: nowIso(), added, updatedExisting, skippedDup, skippedEmpty, adrOnly, adrOnlyMode: importAdrOnlyMode };
   saveSettings();
   pendingCsvRows = null;
   render();
-  const bits = [`${added} neu`];
-  if(updatedExisting) bits.push(`${updatedExisting} bestehende ergänzt`);
-  if(adrOnly) bits.push(`${adrOnly} nur ins Adressbuch (kein Vorgang)`);
-  bits.push(`${skippedDup - updatedExisting} unverändert übersprungen`);
-  showToast(`Import fertig: ${bits.join(', ')}`);
+
+  if(importAdrOnlyMode){
+    showToast(`Adressbuch-Import fertig: ${adrOnly} Zeilen verarbeitet, ${updatedExisting} bestehende ergänzt, keine Aufträge angelegt`);
+  } else {
+    const bits = [`${added} neu`];
+    if(updatedExisting) bits.push(`${updatedExisting} bestehende ergänzt`);
+    if(adrOnly) bits.push(`${adrOnly} nur ins Adressbuch (kein Vorgang)`);
+    bits.push(`${skippedDup - updatedExisting} unverändert übersprungen`);
+    showToast(`Import fertig: ${bits.join(', ')}`);
+  }
+  importAdrOnlyMode = false;
 }
 
 /* ---------------------------------------------------------------
    Backup export / import (for syncing via SharePoint/OneDrive)
 --------------------------------------------------------------- */
+function adressbuchExportRows(){
+  return adressbuch.slice()
+    .sort((a,b) => (a.adresse||'').localeCompare(b.adresse||''))
+    .map(e => ({
+      'Kundenname': e.kundenname || '',
+      'Adresse': e.adresse || '',
+      'Telefonnummer': e.telefonnummer || '',
+      'E-Mail': e.email || '',
+      'Standort': e.standort || '',
+      'Zähler': e.zaehler || '',
+      'Bauform Zähler': e.bauform || '',
+      'Zählerplatz-ID': e.zaehlerplatzId || '',
+      'Kundencode': e.kundencode || '',
+      'Breitengrad': e.koordinaten ? e.koordinaten.lat : '',
+      'Längengrad': e.koordinaten ? e.koordinaten.lon : '',
+    }));
+}
+
+function exportAdressbuchExcel(){
+  if(adressbuch.length === 0){ showToast('Adressbuch ist leer'); return; }
+  const rows = adressbuchExportRows();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  // Force ID-like columns to text format so Excel never turns them into numbers
+  // (that's exactly the ".0" / lost-leading-zero bug we hit before).
+  const textCols = ['Telefonnummer','Zähler','Zählerplatz-ID','Kundencode'];
+  const headerRow = Object.keys(rows[0] || {});
+  textCols.forEach(colName => {
+    const colIdx = headerRow.indexOf(colName);
+    if(colIdx === -1) return;
+    for(let r = 1; r <= rows.length; r++){
+      const cellRef = XLSX.utils.encode_cell({ r, c: colIdx });
+      const cell = ws[cellRef];
+      if(cell && cell.v !== ''){ cell.t = 's'; cell.z = '@'; }
+    }
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Adressbuch');
+  XLSX.writeFile(wb, `adressbuch-export-${new Date().toISOString().slice(0,10)}.xlsx`);
+  showToast('Adressbuch als Excel exportiert');
+}
+
+function exportAdressbuchCsv(){
+  if(adressbuch.length === 0){ showToast('Adressbuch ist leer'); return; }
+  const rows = adressbuchExportRows();
+  const csv = Papa.unparse(rows);
+  // UTF-8 BOM so Excel shows Umlaute (ä/ö/ü) correctly when opening the CSV directly
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `adressbuch-export-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  showToast('Adressbuch als CSV exportiert');
+}
+
 async function exportBackup(){
   const payload = {
     kind: 'auftragsmappe-sicherung',
@@ -1619,6 +1760,7 @@ function switchTab(tab){
 }
 
 function render(){
+  updateReconnectBanner();
   const offen = auftraege.filter(a => a.status !== 'erledigt');
   const erledigt = auftraege.filter(a => a.status === 'erledigt');
   const mitTermin = auftraege.filter(a => a.termin);
@@ -1845,10 +1987,12 @@ function renderEinstellungen(){
     <div class="settings-section">
       <h4>Daten importieren</h4>
       <div class="settings-row">
-        <button class="btn primary" onclick="document.getElementById('csvInput').click()">Datei importieren (CSV/Excel)</button>
+        <button class="btn primary" onclick="startImport(false)">Datei importieren (CSV/Excel)</button>
+        <button class="btn" onclick="startImport(true)">📇 Nur ins Adressbuch importieren</button>
         <button class="btn" onclick="openMappingModal(true)">Spaltenzuordnung</button>
       </div>
       <p class="hint">${escapeHtml(lastImportText)}</p>
+      <p class="hint">"Nur ins Adressbuch" ist gedacht für alte, bereits erledigte Vorgänge: Anschrift, Zähler, Telefon usw. landen im Adressbuch, es werden aber keine neuen Aufträge angelegt.</p>
     </div>
 
     <div class="settings-section">
@@ -1915,6 +2059,15 @@ function renderEinstellungen(){
       </div>
       <p class="hint">${escapeHtml(syncText)}</p>
       ${backupStalenessWarningHtml()}
+    </div>
+
+    <div class="settings-section">
+      <h4>Adressbuch extern exportieren</h4>
+      <div class="settings-row">
+        <button class="btn" onclick="exportAdressbuchExcel()">📊 Als Excel</button>
+        <button class="btn" onclick="exportAdressbuchCsv()">📄 Als CSV</button>
+      </div>
+      <p class="hint">Eigenständige Datei nur mit dem Adressbuch, unabhängig von dieser App lesbar (Excel, Datenbanken, GIS-Tools) — für dein dauerhaftes Archiv. IDs/Zählernummern sind als Text formatiert, damit Excel sie nicht in Zahlen verwandelt.</p>
     </div>
 
     <div class="settings-section" style="border-color:var(--red-bg)">
@@ -2808,6 +2961,74 @@ function renderAuftragTable(list, isErledigtTab){
 }
 
 let adrSearch = '';
+
+/* ---------------------------------------------------------------
+   Manuelles Anlegen eines Adressbuch-Eintrags (Zähler + Standort Pflicht)
+--------------------------------------------------------------- */
+function openNewAdrEntryModal(){
+  showModal(`
+    <div class="modal-head"><h3>Neuer Adressbuch-Eintrag</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-row">
+        <div class="field"><label>Zähler(-nummer) <span class="req-star">*</span></label><input type="text" id="new_adr_zaehler"></div>
+        <div class="field"><label>Standort <span class="req-star">*</span></label><input type="text" id="new_adr_standort"></div>
+      </div>
+      <div class="field"><label>Kundenname</label><input type="text" id="new_adr_kundenname"></div>
+      <div class="field"><label>Adresse</label><input type="text" id="new_adr_adresse"></div>
+      <div class="field-row">
+        <div class="field"><label>Telefonnummer</label><input type="text" id="new_adr_telefon"></div>
+        <div class="field"><label>E-Mail</label><input type="text" id="new_adr_email"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Kundencode</label><input type="text" id="new_adr_kundencode"></div>
+        <div class="field"><label>Zählerplatz-ID</label><input type="text" id="new_adr_zaehlerplatzid"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Bauform Zähler</label><input type="text" id="new_adr_bauform"></div>
+        <div class="field"><label>Koordinaten</label><input type="text" id="new_adr_koordinaten" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="saveNewAdrEntry()">Anlegen</button>
+    </div>
+  `);
+}
+function saveNewAdrEntry(){
+  const val = (id) => document.getElementById(id)?.value.trim() || '';
+  const zaehler = val('new_adr_zaehler');
+  const standort = val('new_adr_standort');
+  if(!zaehler || !standort){
+    showToast('Zähler und Standort sind Pflichtfelder');
+    return;
+  }
+  const koordinatenRaw = val('new_adr_koordinaten');
+  const koordinaten = koordinatenRaw ? parseCoords(koordinatenRaw) : null;
+  if(koordinatenRaw && !koordinaten){
+    showToast('Ungültiges Koordinatenformat, z.B. 52.130, 11.630');
+    return;
+  }
+  const entry = {
+    id: uid(),
+    kundencode: val('new_adr_kundencode'),
+    zaehlerplatzId: val('new_adr_zaehlerplatzid'),
+    kundenname: val('new_adr_kundenname'),
+    adresse: val('new_adr_adresse'),
+    telefonnummer: val('new_adr_telefon'),
+    email: val('new_adr_email'),
+    koordinaten,
+    koordinatenAktualisiertAm: koordinaten ? todayDe() : '',
+    zaehler,
+    bauform: val('new_adr_bauform'),
+    standort,
+    history: [{ ts: nowIso(), field:'angelegt', old:'', new:'manuell angelegt' }]
+  };
+  adressbuch.push(entry);
+  saveAdressbuch();
+  closeModal();
+  render();
+  showToast('Eintrag angelegt');
+}
 let adrMapInstance = null;
 let adrDetailsOpen = {};
 
@@ -2893,9 +3114,12 @@ let adrViewMode = 'liste';
 
 function renderAdressbuch(){
   if(adressbuch.length === 0){
-    return `<div class="empty-state">
+    return `<div class="settings-row" style="margin-bottom:14px">
+      <button class="btn primary" onclick="openNewAdrEntryModal()">+ Neuer Eintrag</button>
+    </div>
+    <div class="empty-state">
       <div class="big">Adressbuch ist leer</div>
-      <div>Einträge entstehen automatisch beim Import und bleiben dauerhaft erhalten.</div>
+      <div>Einträge entstehen automatisch beim Import und bleiben dauerhaft erhalten, oder leg selbst einen an.</div>
     </div>`;
   }
   const q = adrSearch.trim().toLowerCase();
@@ -2915,6 +3139,7 @@ function renderAdressbuch(){
     <div class="view-toggle">
       <button class="btn small ${adrViewMode==='liste'?'active':''}" onclick="setAdrViewMode('liste')">📋 Liste</button>
       <button class="btn small ${adrViewMode==='karte'?'active':''}" onclick="setAdrViewMode('karte')">🗺️ Karte</button>
+      <button class="btn small primary" onclick="openNewAdrEntryModal()" style="margin-left:auto">+ Neuer Eintrag</button>
     </div>`;
 
   if(filtered.length === 0){
@@ -2939,6 +3164,7 @@ function renderAdressbuch(){
           onchange="updateAdrField('${e.id}','adresse', this.value)">
         <input class="adr-phone-input" type="text" value="${escapeHtml(e.telefonnummer)}" placeholder="Telefonnummer"
           onchange="updateAdrField('${e.id}','telefonnummer', this.value)">
+        ${mostRecentUpdateStr(e) ? `<span style="font-size:11px;color:var(--ink-soft)">Zuletzt geändert: ${mostRecentUpdateStr(e)}</span>` : ''}
       </div>
       <div class="adr-card-actions">
         ${e.telefonnummer
@@ -2949,13 +3175,13 @@ function renderAdressbuch(){
       </div>
       ${detailsOpen ? `
         <div class="adr-card-details">
-          <div class="field"><label>E-Mail</label><input class="cell-input" type="text" value="${escapeHtml(e.email||'')}" onchange="updateAdrField('${e.id}','email', this.value)"></div>
+          <div class="field"><label>E-Mail</label><input class="cell-input" type="text" value="${escapeHtml(e.email||'')}" onchange="updateAdrField('${e.id}','email', this.value)">${fieldUpdateHint(e,'email')}</div>
           <div class="field-row">
             <div class="field"><label>Zählerplatz-ID</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehlerplatzId||'')}" onchange="updateAdrField('${e.id}','zaehlerplatzId', this.value)" style="font-family:var(--font-mono);font-size:12px"></div>
-            <div class="field"><label>Standort</label><input class="cell-input" type="text" value="${escapeHtml(e.standort||'')}" onchange="updateAdrField('${e.id}','standort', this.value)"></div>
+            <div class="field"><label>Standort</label><input class="cell-input" type="text" value="${escapeHtml(e.standort||'')}" onchange="updateAdrField('${e.id}','standort', this.value)">${fieldUpdateHint(e,'standort')}</div>
           </div>
           <div class="field-row">
-            <div class="field"><label>Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehler||'')}" onchange="updateAdrField('${e.id}','zaehler', this.value)"></div>
+            <div class="field"><label>Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehler||'')}" onchange="updateAdrField('${e.id}','zaehler', this.value)">${fieldUpdateHint(e,'zaehler')}</div>
             <div class="field"><label>Bauform Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.bauform||'')}" onchange="updateAdrField('${e.id}','bauform', this.value)"></div>
           </div>
           <div class="field"><label>Koordinaten</label>
@@ -2963,6 +3189,7 @@ function renderAdressbuch(){
               <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="flex:1;font-family:var(--font-mono);font-size:12px">
               <button class="icon-btn" onclick="captureGpsForAdr('${e.id}')" title="Aktuellen Standort übernehmen">📍</button>
             </div>
+            ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}</p>` : ''}
           </div>
           <p class="hint">Kundencode: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
         </div>` : ''}
@@ -3091,6 +3318,7 @@ function openAuftragEditModal(id){
               onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="flex:1;font-family:var(--font-mono);font-size:13px">
             <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
           </div>
+          ${a.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(a.koordinatenAktualisiertAm)}</p>` : ''}
         </div>
         <div class="field">
           <label>📞 Telefon</label>
@@ -3099,6 +3327,7 @@ function openAuftragEditModal(id){
               onchange="updateAuftragField('${a.id}','telefonnummer', this.value)" placeholder="–" style="flex:1">
             ${a.telefonnummer ? phoneButtonsHtml(a.telefonnummer) : `<button class="btn small" onclick="searchPhoneForAuftrag('${a.id}')">🔍</button>`}
           </div>
+          ${fieldUpdateHint(a, 'telefonnummer')}
         </div>
       </div>
       ${a.auftragsbeschreibung ? `<div class="field"><label>Auftragsbeschreibung</label><p class="ro-value" style="white-space:pre-line">${escapeHtml(a.auftragsbeschreibung)}</p></div>` : ''}
@@ -3121,6 +3350,7 @@ function openAuftragEditModal(id){
           <button type="button" class="icon-btn" id="dictate_edit_kommentar" onclick="startDictation('edit_kommentar')" title="Diktieren">🎙️</button>
         </label>
         <textarea id="edit_kommentar" rows="3">${escapeHtml(a.kommentar||'')}</textarea>
+        ${fieldUpdateHint(a, 'kommentar')}
       </div>
       <div class="field">
         <label>📞 Wiedervorlage</label>
