@@ -940,29 +940,35 @@ async function idbSetHandle(handle, key){
   }catch(e){}
 }
 
-async function chooseFolder(){
+async function chooseFolderNew(){
   if(!FS_SUPPORTED){
     showToast('Datei-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
     return;
   }
   try{
-    let handle;
-    // Prefer picking an existing file (e.g. one already created by another device)
-    // so multiple devices can converge on the very same file.
-    try{
-      const [picked] = await window.showOpenFilePicker({
-        types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }],
-        excludeAcceptAllOption: false,
-        multiple: false
-      });
-      handle = picked;
-    }catch(openErr){
-      // user might prefer to create a new file instead — offer Save picker as fallback
-      handle = await window.showSaveFilePicker({
-        suggestedName: 'auftragsmappe-daten.json',
-        types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }]
-      });
-    }
+    const handle = await window.showSaveFilePicker({
+      suggestedName: 'auftragsmappe-daten.json',
+      types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }]
+    });
+    folderHandle = handle;
+    folderNeedsPermission = false;
+    await idbSetHandle(handle);
+    await saveToFolder();
+    render();
+    showToast('Neue Datei angelegt und verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
+  }catch(e){ /* cancelled */ }
+}
+async function chooseFolderExisting(){
+  if(!FS_SUPPORTED){
+    showToast('Datei-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
+    return;
+  }
+  try{
+    const [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }],
+      excludeAcceptAllOption: false,
+      multiple: false
+    });
     folderHandle = handle;
     folderNeedsPermission = false;
     await idbSetHandle(handle);
@@ -970,7 +976,7 @@ async function chooseFolder(){
     await saveToFolder();
     render();
     showToast('Datei verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
-  }catch(e){ /* user cancelled the picker */ }
+  }catch(e){ /* cancelled */ }
 }
 function updateReconnectBanner(){
   const el = document.getElementById('reconnectBanner');
@@ -1006,23 +1012,28 @@ async function reconnectFolder(){
     }
   }catch(e){ showToast('Verbindung zur Datei fehlgeschlagen'); }
 }
-async function choosePhotoZip(){
+async function choosePhotoZipNew(){
   if(!FS_SUPPORTED){ showToast('Nur in Chrome/Edge auf dem Desktop verfügbar'); return; }
   try{
-    let handle;
-    try{
-      const [picked] = await window.showOpenFilePicker({
-        types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }],
-        excludeAcceptAllOption: false,
-        multiple: false
-      });
-      handle = picked;
-    }catch(openErr){
-      handle = await window.showSaveFilePicker({
-        suggestedName: 'auftragsmappe-fotos.zip',
-        types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }]
-      });
-    }
+    const handle = await window.showSaveFilePicker({
+      suggestedName: 'auftragsmappe-fotos.zip',
+      types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }]
+    });
+    photoZipHandle = handle;
+    photoZipNeedsPermission = false;
+    await idbSetHandle(handle, 'photoZip');
+    render();
+    showToast('Neue Foto-Datei angelegt und verknüpft');
+  }catch(e){ /* cancelled */ }
+}
+async function choosePhotoZipExisting(){
+  if(!FS_SUPPORTED){ showToast('Nur in Chrome/Edge auf dem Desktop verfügbar'); return; }
+  try{
+    const [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }],
+      excludeAcceptAllOption: false,
+      multiple: false
+    });
     photoZipHandle = handle;
     photoZipNeedsPermission = false;
     await idbSetHandle(handle, 'photoZip');
@@ -2476,10 +2487,12 @@ function renderEinstellungen(){
       <h4>Eigene Sicherungsdatei (PC, Chrome/Edge)</h4>
       <div class="settings-row">
         ${folderHandle && !folderNeedsPermission
-          ? `<button class="btn" onclick="chooseFolder()">📄 Andere Datei wählen</button>`
+          ? `<button class="btn" onclick="chooseFolderExisting()">📂 Andere bestehende Datei wählen</button>
+             <button class="btn" onclick="chooseFolderNew()">📄 Stattdessen neue Datei anlegen</button>`
           : folderNeedsPermission
             ? `<button class="btn primary" onclick="reconnectFolder()">🔄 Datei wieder verbinden</button>`
-            : `<button class="btn primary" onclick="chooseFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Datei verknüpfen</button>`
+            : `<button class="btn primary" onclick="chooseFolderNew()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Neue Datei anlegen</button>
+               <button class="btn" onclick="chooseFolderExisting()" ${FS_SUPPORTED ? '' : 'disabled'}>📂 Bestehende Datei wählen</button>`
         }
       </div>
       <p class="hint">
@@ -2498,10 +2511,12 @@ function renderEinstellungen(){
       <h4>Foto-Sicherungsdatei (PC, Chrome/Edge)</h4>
       <div class="settings-row">
         ${photoZipHandle && !photoZipNeedsPermission
-          ? `<button class="btn" onclick="choosePhotoZip()">📄 Andere Datei wählen</button>`
+          ? `<button class="btn" onclick="choosePhotoZipExisting()">📂 Andere bestehende Datei wählen</button>
+             <button class="btn" onclick="choosePhotoZipNew()">📄 Stattdessen neue Datei anlegen</button>`
           : photoZipNeedsPermission
             ? `<button class="btn primary" onclick="reconnectPhotoZip()">🔄 Datei wieder verbinden</button>`
-            : `<button class="btn primary" onclick="choosePhotoZip()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Foto-Datei verknüpfen</button>`
+            : `<button class="btn primary" onclick="choosePhotoZipNew()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Neue Datei anlegen</button>
+               <button class="btn" onclick="choosePhotoZipExisting()" ${FS_SUPPORTED ? '' : 'disabled'}>📂 Bestehende Datei wählen</button>`
         }
       </div>
       <p class="hint">
