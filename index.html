@@ -636,8 +636,7 @@ function runToastUndo(){
    a standalone hosted app (localStorage + optional linked folder)
 --------------------------------------------------------------- */
 const hasClaudeStorage = (typeof window.storage !== 'undefined');
-const IS_MOBILE_UA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-const FS_SUPPORTED = ('showDirectoryPicker' in window) && !IS_MOBILE_UA;
+const FS_SUPPORTED = ('showDirectoryPicker' in window);
 let folderHandle = null;
 let folderNeedsPermission = false;
 let folderSyncTimer = null;
