@@ -21,8 +21,9 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.20.0/umd/index.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/piexifjs/1.0.6/piexif.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
@@ -639,8 +640,8 @@ const FS_SUPPORTED = ('showDirectoryPicker' in window);
 let folderHandle = null;
 let folderNeedsPermission = false;
 let folderSyncTimer = null;
-let photoFolderHandle = null;
-let photoFolderNeedsPermission = false;
+let photoZipHandle = null;
+let photoZipNeedsPermission = false;
 
 async function kvGet(key){
   if(hasClaudeStorage){
@@ -762,6 +763,15 @@ function triggerPhotoCapture(auftragId){
   document.getElementById('photoInput').click();
 }
 
+function nextPhotoFilename(a, kundencode, zaehler, datum){
+  const base = `${kundencode}_${zaehler}_${datum}`;
+  const existing = (a.photoFilenames || []).map(f => f.replace(/\.jpg$/,''));
+  if(!existing.includes(base)) return base + '.jpg';
+  let n = 2;
+  while(existing.includes(`${base}_${n}`)) n++;
+  return `${base}_${n}.jpg`;
+}
+
 document.getElementById('photoInput').addEventListener('change', async function(e){
   const file = e.target.files[0];
   e.target.value = '';
@@ -769,21 +779,27 @@ document.getElementById('photoInput').addEventListener('change', async function(
   try{
     const a = auftraege.find(x => x.id === photoTargetAuftragId);
     const { blob, dataUrl } = await compressImageFile(file, a);
-    const folderReady = photoFolderHandle && !photoFolderNeedsPermission;
+    const folderReady = photoZipHandle && !photoZipNeedsPermission;
 
     if(folderReady && a){
-      const filename = await savePhotoToFolder(a, blob);
-      if(filename){
-        a.photoFilename = filename;
+      if(!a.photoFilenames) a.photoFilenames = [];
+      const kundencode = sanitizeFilename(a.kundencode || 'ohne-kundencode');
+      const zaehler = sanitizeFilename(a.zaehler || 'ohne-zaehlernummer');
+      const datum = todayDe().split('.').join('-');
+      const filename = nextPhotoFilename(a, kundencode, zaehler, datum);
+      const saved = await savePhotoToFolderNamed(filename, blob);
+      if(saved){
+        a.photoFilenames.push(filename);
         saveAuftraege();
-        showToast('Foto im Ordner gespeichert: ' + filename);
+        showToast('Foto gespeichert: ' + filename);
       } else {
-        showToast('Foto-Ordner-Speicherung fehlgeschlagen, speichere im App-Speicher');
+        showToast('Foto-Speicherung fehlgeschlagen, speichere im App-Speicher');
         await kvSet('photo_' + photoTargetAuftragId, dataUrl);
       }
     } else {
+      // No zip linked — local storage only realistically fits a single photo.
       await kvSet('photo_' + photoTargetAuftragId, dataUrl);
-      showToast('Foto gespeichert (App-Speicher — für viele Fotos Fotoordner in den Einstellungen verknüpfen)');
+      showToast('Foto gespeichert (App-Speicher, nur 1 Foto möglich — für mehrere Fotos die Foto-Datei in den Einstellungen verknüpfen)');
     }
     refreshPhotoArea(photoTargetAuftragId);
   }catch(err){
@@ -791,55 +807,66 @@ document.getElementById('photoInput').addEventListener('change', async function(
   }
 });
 
-async function getPhotoSrc(auftragId){
+async function getPhotoSrcList(auftragId){
   const a = auftraege.find(x => x.id === auftragId);
-  if(a && a.photoFilename && photoFolderHandle && !photoFolderNeedsPermission){
-    try{
-      const fileHandle = await photoFolderHandle.getFileHandle(a.photoFilename);
-      const file = await fileHandle.getFile();
-      return URL.createObjectURL(file);
-    }catch(e){ /* file might be missing/renamed — fall through */ }
+  const zipReady = photoZipHandle && !photoZipNeedsPermission;
+  if(a && a.photoFilenames && a.photoFilenames.length && zipReady){
+    const results = await Promise.all(a.photoFilenames.map(async (fn) => ({ filename: fn, src: await readPhotoFromZip(fn) })));
+    return results.filter(r => r.src);
+  }
+  // legacy single-photo fallback (App-Speicher oder alte photoFilename-Fotos)
+  if(a && a.photoFilename && zipReady){
+    const src = await readPhotoFromZip(a.photoFilename);
+    if(src) return [{ filename: a.photoFilename, src }];
   }
   const dataUrl = await kvGet('photo_' + auftragId);
-  return dataUrl || null;
+  if(dataUrl) return [{ filename: null, src: dataUrl }];
+  return [];
 }
 
 async function refreshPhotoArea(auftragId){
   const area = document.getElementById('photoArea');
   if(!area) return; // modal already closed
-  const src = await getPhotoSrc(auftragId);
-  area.innerHTML = photoAreaHtml(auftragId, src);
+  const photos = await getPhotoSrcList(auftragId);
+  area.innerHTML = photoAreaHtml(auftragId, photos);
 }
 
-function photoAreaHtml(auftragId, src){
+function photoAreaHtml(auftragId, photos){
   const a = auftraege.find(x => x.id === auftragId);
   const hasCoords = a && a.koordinaten;
-  if(src){
-    return `
-      <img src="${src}" style="width:100%;border-radius:8px;display:block;margin-bottom:8px;cursor:pointer" onclick="openPhotoFull('${auftragId}')">
-      <div class="settings-row">
-        <button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 Foto ersetzen</button>
-        ${hasCoords ? `<button class="btn small" onclick="navigateToAuftrag('${auftragId}')">🗺️ Zum Standort</button>` : ''}
-        <button class="btn small danger" onclick="deletePhoto('${auftragId}')">🗑 Foto löschen</button>
-      </div>
-      ${hasCoords ? `<p class="hint" style="margin:6px 0 0">📍 GPS-Standort ist im Foto gespeichert (EXIF)</p>` : ''}`;
-  }
-  return `<button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 Foto aufnehmen</button>`;
+  const thumbs = photos.map((p, idx) => `
+    <div style="position:relative;flex:0 0 auto">
+      <img src="${p.src}" style="width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;display:block" onclick="openPhotoFull('${auftragId}', ${idx})">
+      <button class="icon-btn" onclick="deletePhoto('${auftragId}', ${p.filename ? `'${p.filename}'` : 'null'})" title="Löschen" style="position:absolute;top:4px;right:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗑</button>
+    </div>`).join('');
+  return `
+    <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px">${thumbs}</div>
+    <div class="settings-row">
+      <button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 ${photos.length ? 'Foto hinzufügen' : 'Foto aufnehmen'}</button>
+      ${hasCoords ? `<button class="btn small" onclick="navigateToAuftrag('${auftragId}')">🗺️ Zum Standort</button>` : ''}
+    </div>
+    ${hasCoords && photos.length ? `<p class="hint" style="margin:6px 0 0">📍 GPS-Standort ist in neuen Fotos gespeichert (EXIF)</p>` : ''}`;
 }
 
-async function openPhotoFull(auftragId){
-  const src = await getPhotoSrc(auftragId);
-  if(src){ window.open(src, '_blank'); }
+async function openPhotoFull(auftragId, idx){
+  const photos = await getPhotoSrcList(auftragId);
+  const p = photos[idx];
+  if(p && p.src){ window.open(p.src, '_blank'); }
 }
 
-async function deletePhoto(auftragId){
+async function deletePhoto(auftragId, filename){
   const a = auftraege.find(x => x.id === auftragId);
-  if(a && a.photoFilename && photoFolderHandle && !photoFolderNeedsPermission){
-    try{ await photoFolderHandle.removeEntry(a.photoFilename); }catch(e){ /* already gone, ignore */ }
-    a.photoFilename = '';
+  const zipReady = photoZipHandle && !photoZipNeedsPermission;
+  if(a && filename && zipReady){
+    await removePhotoFromZip(filename);
+    if(a.photoFilenames) a.photoFilenames = a.photoFilenames.filter(f => f !== filename);
+    if(a.photoFilename === filename) a.photoFilename = ''; // legacy field cleanup
     saveAuftraege();
   }
-  await kvSet('photo_' + auftragId, '');
+  if(!filename){
+    // legacy/local-storage photo
+    await kvSet('photo_' + auftragId, '');
+  }
   showToast('Foto gelöscht');
   refreshPhotoArea(auftragId);
 }
@@ -954,6 +981,12 @@ function updateReconnectBanner(){
       ⚠️ Verbindung zur Sicherungsdatei muss erneuert werden — aktuelle Daten wurden noch nicht geladen!
       <button class="btn small" onclick="reconnectFolder()">🔄 Jetzt verbinden</button>
     </div>`;
+  } else if(photoZipHandle && photoZipNeedsPermission){
+    el.style.display = '';
+    el.innerHTML = `<div class="reconnect-banner">
+      ⚠️ Verbindung zur Foto-Datei muss erneuert werden — neue Fotos werden sonst nur lokal gespeichert!
+      <button class="btn small" onclick="reconnectPhotoZip()">🔄 Jetzt verbinden</button>
+    </div>`;
   } else {
     el.style.display = 'none';
     el.innerHTML = '';
@@ -973,56 +1006,104 @@ async function reconnectFolder(){
     }
   }catch(e){ showToast('Verbindung zur Datei fehlgeschlagen'); }
 }
-async function choosePhotoFolder(){
+async function choosePhotoZip(){
   if(!FS_SUPPORTED){ showToast('Nur in Chrome/Edge auf dem Desktop verfügbar'); return; }
   try{
-    const handle = await window.showDirectoryPicker();
-    photoFolderHandle = handle;
-    photoFolderNeedsPermission = false;
-    await idbSetHandle(handle, 'photoFolder');
+    let handle;
+    try{
+      const [picked] = await window.showOpenFilePicker({
+        types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }],
+        excludeAcceptAllOption: false,
+        multiple: false
+      });
+      handle = picked;
+    }catch(openErr){
+      handle = await window.showSaveFilePicker({
+        suggestedName: 'auftragsmappe-fotos.zip',
+        types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }]
+      });
+    }
+    photoZipHandle = handle;
+    photoZipNeedsPermission = false;
+    await idbSetHandle(handle, 'photoZip');
     render();
-    showToast('Fotoordner verknüpft');
+    showToast('Foto-Datei verknüpft — Fotos werden ab jetzt automatisch dort gespeichert');
   }catch(e){ /* cancelled */ }
 }
-async function reconnectPhotoFolder(){
-  if(!photoFolderHandle) return;
+async function reconnectPhotoZip(){
+  if(!photoZipHandle) return;
   try{
-    const perm = await photoFolderHandle.requestPermission({ mode:'readwrite' });
+    const perm = await photoZipHandle.requestPermission({ mode:'readwrite' });
     if(perm === 'granted'){
-      photoFolderNeedsPermission = false;
+      photoZipNeedsPermission = false;
       render();
-      showToast('Fotoordner wieder verbunden');
+      showToast('Foto-Datei wieder verbunden');
     } else {
       showToast('Zugriff wurde nicht erlaubt');
     }
   }catch(e){ showToast('Verbindung fehlgeschlagen'); }
 }
-async function tryRestorePhotoFolder(){
+async function tryRestorePhotoZip(){
   if(!FS_SUPPORTED) return;
-  const handle = await idbGetHandle('photoFolder');
+  const handle = await idbGetHandle('photoZip');
   if(!handle) return;
-  photoFolderHandle = handle;
+  photoZipHandle = handle;
   try{
     const perm = await handle.queryPermission({ mode:'readwrite' });
-    photoFolderNeedsPermission = (perm !== 'granted');
-  }catch(e){ photoFolderNeedsPermission = true; }
+    photoZipNeedsPermission = (perm !== 'granted');
+  }catch(e){ photoZipNeedsPermission = true; }
 }
 function sanitizeFilename(s){
   return (s||'').toString().trim().replace(/[\\/:*?"<>|]/g,'_') || 'unbenannt';
 }
+async function loadPhotoZip(){
+  const file = await photoZipHandle.getFile();
+  if(file.size === 0) return new JSZip();
+  const buf = await file.arrayBuffer();
+  return await JSZip.loadAsync(buf);
+}
+async function savePhotoZipHandle(zip){
+  const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
+  const writable = await photoZipHandle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+}
+async function savePhotoToFolderNamed(filename, blob){
+  if(!photoZipHandle || photoZipNeedsPermission) return false;
+  try{
+    const zip = await loadPhotoZip();
+    zip.file(filename, blob);
+    await savePhotoZipHandle(zip);
+    return filename;
+  }catch(e){ console.error('savePhotoToFolderNamed', e); return false; }
+}
 async function savePhotoToFolder(auftragOrEntry, blob){
-  if(!photoFolderHandle || photoFolderNeedsPermission) return false;
+  if(!photoZipHandle || photoZipNeedsPermission) return false;
   try{
     const kundencode = sanitizeFilename(auftragOrEntry.kundencode || 'ohne-kundencode');
     const zaehler = sanitizeFilename(auftragOrEntry.zaehler || 'ohne-zaehlernummer');
     const datum = todayDe().split('.').join('-'); // TT-MM-JJJJ, dateisicher
     const filename = `${kundencode}_${zaehler}_${datum}.jpg`;
-    const fileHandle = await photoFolderHandle.getFileHandle(filename, { create:true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(blob);
-    await writable.close();
-    return filename;
+    return await savePhotoToFolderNamed(filename, blob);
   }catch(e){ console.error('savePhotoToFolder', e); return false; }
+}
+async function readPhotoFromZip(filename){
+  if(!photoZipHandle || photoZipNeedsPermission || !filename) return null;
+  try{
+    const zip = await loadPhotoZip();
+    const entry = zip.file(filename);
+    if(!entry) return null;
+    const blob = await entry.async('blob');
+    return URL.createObjectURL(blob);
+  }catch(e){ console.error('readPhotoFromZip', e); return null; }
+}
+async function removePhotoFromZip(filename){
+  if(!photoZipHandle || photoZipNeedsPermission || !filename) return;
+  try{
+    const zip = await loadPhotoZip();
+    zip.remove(filename);
+    await savePhotoZipHandle(zip);
+  }catch(e){ console.error('removePhotoFromZip', e); }
 }
 
 async function tryRestoreFolder(){
@@ -1197,29 +1278,103 @@ function updateAuftragCoords(id, value){
   updateAdrCoords(ensureAdrEntryForAuftrag(a).id, parsed);
   showToast('Gespeichert');
 }
+let pendingGpsAccept = null;
+let pendingGpsRetry = null;
+
 function captureGps(onSuccess){
   if(!navigator.geolocation){
     showToast('Standortzugriff wird von diesem Gerät/Browser nicht unterstützt');
     return;
   }
-  showToast('Standort wird ermittelt…');
-  navigator.geolocation.getCurrentPosition(
-    (pos) => onSuccess({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-    () => showToast('Standort konnte nicht ermittelt werden — Berechtigung erteilt?'),
-    { enableHighAccuracy: true, timeout: 12000 }
+  const threshold = settings.gpsAccuracyThreshold || 10;
+  showToast(`Standort wird ermittelt… (Ziel: ±${threshold} m)`);
+
+  let best = null;
+  let watchId = null;
+  let settled = false;
+  let timeoutHandle = null;
+
+  const cleanup = () => {
+    if(watchId !== null) navigator.geolocation.clearWatch(watchId);
+    if(timeoutHandle) clearTimeout(timeoutHandle);
+  };
+  const finish = (coords) => {
+    if(settled) return;
+    settled = true;
+    cleanup();
+    onSuccess(coords);
+  };
+  const onTimeout = () => {
+    if(settled) return;
+    settled = true;
+    cleanup();
+    if(best){
+      offerLowAccuracyGps(best, threshold, onSuccess);
+    } else {
+      showToast('Standort konnte nicht ermittelt werden — Berechtigung erteilt?');
+    }
+  };
+
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const acc = pos.coords.accuracy;
+      const coords = { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: acc };
+      if(!best || acc < best.accuracy){ best = { ...coords }; }
+      if(acc <= threshold){ finish(coords); }
+    },
+    () => { /* einzelne fehlerhafte Messungen ignorieren, auf Timeout verlassen */ },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
   );
+  timeoutHandle = setTimeout(onTimeout, 8000);
+}
+
+function offerLowAccuracyGps(best, threshold, onSuccess){
+  pendingGpsAccept = () => {
+    closeModal();
+    onSuccess({ lat: best.lat, lon: best.lon, accuracy: best.accuracy });
+  };
+  pendingGpsRetry = () => {
+    closeModal();
+    captureGps(onSuccess);
+  };
+  showModal(`
+    <div class="modal-head"><h3>GPS-Genauigkeit gering</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Beste erreichte Genauigkeit: <strong>±${Math.round(best.accuracy)} m</strong> (Ziel: ±${threshold} m).</p>
+      <p class="hint">Am Fenster/im Freien wird GPS meist genauer. Trotzdem übernehmen oder nochmal versuchen?</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn" onclick="pendingGpsRetry()">🔄 Erneut versuchen</button>
+      <button class="btn primary" onclick="pendingGpsAccept()">Trotzdem verwenden</button>
+    </div>
+  `);
 }
 function captureGpsForAuftrag(id){
   captureGps((coords) => {
     updateAuftragCoords(id, fmtCoords(coords));
+    const a = auftraege.find(x => x.id === id);
+    if(a && coords.accuracy != null){
+      a.koordinatenGenauigkeit = Math.round(coords.accuracy);
+      saveAuftraege();
+      if(a.adrEntryId){
+        const entry = adressbuch.find(e => e.id === a.adrEntryId);
+        if(entry){ entry.koordinatenGenauigkeit = a.koordinatenGenauigkeit; saveAdressbuch(); }
+      }
+    }
     render();
   });
 }
 function captureGpsForAdr(id){
   captureGps((coords) => {
     updateAdrCoords(id, coords);
+    const entry = adressbuch.find(e => e.id === id);
+    if(entry && coords.accuracy != null){
+      entry.koordinatenGenauigkeit = Math.round(coords.accuracy);
+      saveAdressbuch();
+    }
     render();
-    showToast('Koordinaten gespeichert: ' + fmtCoords(coords));
+    showToast('Koordinaten gespeichert: ' + fmtCoords(coords) + (coords.accuracy != null ? ` (±${Math.round(coords.accuracy)}m)` : ''));
   });
 }
 function updateAdrCoords(entryId, coords){
@@ -2308,6 +2463,16 @@ function renderEinstellungen(){
     </div>
 
     <div class="settings-section">
+      <h4>GPS-Genauigkeit</h4>
+      <div class="settings-row" style="align-items:center">
+        <label style="font-size:13.5px;font-weight:500">Nur Standort übernehmen, wenn Genauigkeit besser als</label>
+        <input type="number" id="gpsAccuracyInput" value="${settings.gpsAccuracyThreshold || 10}" min="1" max="100" style="width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:6px" onchange="saveGpsAccuracyThreshold(this.value)">
+        <span class="muted" style="font-size:13px">Meter</span>
+      </div>
+      <p class="hint">Die App misst bis zu 8 Sekunden lang und nimmt automatisch die beste Messung. Wird der Zielwert nicht erreicht, fragt sie nach, ob die ungenauere Position trotzdem übernommen werden soll.</p>
+    </div>
+
+    <div class="settings-section">
       <h4>Eigene Sicherungsdatei (PC, Chrome/Edge)</h4>
       <div class="settings-row">
         ${folderHandle && !folderNeedsPermission
@@ -2330,23 +2495,23 @@ function renderEinstellungen(){
     </div>
 
     <div class="settings-section">
-      <h4>Fotoordner (PC, Chrome/Edge)</h4>
+      <h4>Foto-Sicherungsdatei (PC, Chrome/Edge)</h4>
       <div class="settings-row">
-        ${photoFolderHandle && !photoFolderNeedsPermission
-          ? `<button class="btn" onclick="choosePhotoFolder()">📁 Anderen Ordner wählen</button>`
-          : photoFolderNeedsPermission
-            ? `<button class="btn primary" onclick="reconnectPhotoFolder()">🔄 Ordner wieder verbinden</button>`
-            : `<button class="btn primary" onclick="choosePhotoFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📁 Fotoordner verknüpfen</button>`
+        ${photoZipHandle && !photoZipNeedsPermission
+          ? `<button class="btn" onclick="choosePhotoZip()">📄 Andere Datei wählen</button>`
+          : photoZipNeedsPermission
+            ? `<button class="btn primary" onclick="reconnectPhotoZip()">🔄 Datei wieder verbinden</button>`
+            : `<button class="btn primary" onclick="choosePhotoZip()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Foto-Datei verknüpfen</button>`
         }
       </div>
       <p class="hint">
         ${!FS_SUPPORTED
           ? 'Auf diesem Gerät/Browser nicht verfügbar (nur Desktop Chrome/Edge).'
-          : photoFolderHandle && !photoFolderNeedsPermission
-            ? 'Verknüpft — neue Fotos werden automatisch als Datei in diesem Ordner gespeichert (Name: Kundencode_Zählernummer_Datum.jpg), nicht mehr im begrenzten App-Speicher. Jeder Besuch bekommt so sein eigenes Foto, statt das vorherige zu überschreiben. Idealerweise derselbe OneDrive-Ordner wie deine Sicherungsdatei.'
-            : photoFolderNeedsPermission
-              ? 'Ordner war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
-              : 'Ohne verknüpften Ordner landen Fotos weiterhin im begrenzten Browser-Speicher (nur für wenige Dutzend Fotos gedacht). Für viele Fotos unbedingt hier einen Ordner verknüpfen.'
+          : photoZipHandle && !photoZipNeedsPermission
+            ? 'Verknüpft — neue Fotos werden automatisch als Eintrag (Name: Kundencode_Zählernummer_Datum.jpg) in dieser einen Datei gespeichert, nicht mehr im begrenzten App-Speicher. Jeder Besuch bekommt sein eigenes Foto, statt das vorherige zu überschreiben.'
+            : photoZipNeedsPermission
+              ? 'Datei war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
+              : 'Wähle (oder erstelle) eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, z.B. "auftragsmappe-fotos.zip" — genau wie bei der Sicherungsdatei. Die App speichert danach alle Fotos automatisch als Einträge darin. Ohne Verknüpfung landen Fotos weiterhin im begrenzten Browser-Speicher (nur für wenige Dutzend gedacht).'
         }
       </p>
     </div>
@@ -2733,9 +2898,9 @@ function phoneSearchUrl(name, adresse){
   return 'https://www.google.com/search?q=' + encodeURIComponent(q);
 }
 /* ---------------------------------------------------------------
-   Zähler-Scanner (QR/Barcode via Kamera)
+   Zähler-Scanner (QR/Barcode via Kamera) — ZXing-Engine
 --------------------------------------------------------------- */
-let html5QrScanner = null;
+let zxingReader = null;
 
 let scannerFillTarget = null;
 let pendingScanCallback = null;
@@ -2743,17 +2908,17 @@ let pendingScanCallback = null;
 function openScanner(){
   scannerFillTarget = null;
   pendingScanCallback = null;
-  openScannerModalUi('Zähler scannen', 'Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Adressbuch.');
+  openScannerModalUi('Zähler scannen', 'Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Adressbuch — springt direkt in die Bearbeitung.');
 }
 function openScannerModalUi(title, hint){
-  if(typeof Html5Qrcode === 'undefined'){
+  if(typeof ZXing === 'undefined'){
     showToast('Scanner konnte nicht geladen werden (kein Internet?)');
     return;
   }
   showModal(`
     <div class="modal-head"><h3>${escapeHtml(title)}</h3><button class="close-x" onclick="closeScannerModal()">✕</button></div>
     <div class="modal-body">
-      <div id="qr-reader" style="width:100%;border-radius:8px;overflow:hidden"></div>
+      <video id="qr-video" style="width:100%;border-radius:8px;background:#000" playsinline muted></video>
       <p class="hint">${hint}</p>
     </div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeScannerModal()">Abbrechen</button></div>
@@ -2762,28 +2927,39 @@ function openScannerModalUi(title, hint){
 }
 
 function startScanner(){
-  html5QrScanner = new Html5Qrcode('qr-reader');
-  html5QrScanner.start(
-    { facingMode: 'environment' },
-    { fps: 10, qrbox: 220 },
-    (decodedText) => onScanSuccess(decodedText),
-    () => { /* per-frame scan miss, ignore */ }
-  ).catch(() => {
-    showToast('Kamera konnte nicht gestartet werden — Berechtigung erteilt?');
-  });
+  try{
+    zxingReader = new ZXing.BrowserMultiFormatReader();
+    zxingReader.decodeFromConstraints(
+      { video: { facingMode: 'environment' } },
+      'qr-video',
+      (result, err) => {
+        if(result){ onScanSuccess(result.getText()); }
+        // NotFoundException fires every frame without a code — that's normal, ignore it
+      }
+    ).catch(() => {
+      showToast('Kamera konnte nicht gestartet werden — Berechtigung erteilt?');
+    });
+  }catch(e){
+    showToast('Scanner konnte nicht gestartet werden');
+  }
+}
+
+function stopScanner(){
+  if(zxingReader){
+    try{ zxingReader.reset(); }catch(e){}
+    zxingReader = null;
+  }
 }
 
 function closeScannerModal(){
-  if(html5QrScanner){
-    html5QrScanner.stop().catch(() => {}).finally(() => { html5QrScanner = null; });
-  }
+  stopScanner();
   scannerFillTarget = null;
   pendingScanCallback = null;
   closeModal();
 }
 
 function onScanSuccess(decodedText){
-  if(html5QrScanner){ html5QrScanner.stop().catch(() => {}); html5QrScanner = null; }
+  stopScanner();
   const val = decodedText.trim();
   closeModal();
 
@@ -2802,13 +2978,28 @@ function onScanSuccess(decodedText){
   }
   const adrHit = adressbuch.find(e => e.zaehler && (e.zaehler.trim() === val || e.zaehler.includes(val)));
   if(adrHit){
+    adrViewMode = 'liste';
     switchTab('adressbuch');
     adrDetailsOpen[adrHit.id] = true;
     render();
     showToast('Im Adressbuch gefunden: ' + (adrHit.kundenname || adrHit.adresse));
     return;
   }
-  showToast('Kein Auftrag mit Zähler „' + val + '" gefunden');
+  offerNewEntryForScannedZaehler(val);
+}
+
+function offerNewEntryForScannedZaehler(val){
+  showModal(`
+    <div class="modal-head"><h3>Kein Treffer</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Kein Auftrag und kein Adressbuch-Eintrag mit Zähler „${escapeHtml(val)}" gefunden.</p>
+      <p class="hint">Gleich einen neuen Adressbuch-Eintrag damit anlegen?</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="switchTab('adressbuch');openNewAdrEntryModal({zaehler:'${val.replace(/'/g,"\\'")}'})">+ Neuer Eintrag</button>
+    </div>
+  `);
 }
 
 /* ---------------------------------------------------------------
@@ -3432,11 +3623,13 @@ function scanForNewAdrZaehler(){
   };
   openScannerModalUi('Zähler scannen', 'Halte den Barcode/QR-Code der Zählernummer vor die Kamera — deine übrigen Eingaben bleiben erhalten.');
 }
+let newAdrEntryGpsAccuracy = null;
 function captureGpsForNewEntry(){
   captureGps((coords) => {
     const el = document.getElementById('new_adr_koordinaten');
     if(el) el.value = fmtCoords(coords);
-    showToast('Standort übernommen');
+    newAdrEntryGpsAccuracy = coords.accuracy != null ? Math.round(coords.accuracy) : null;
+    showToast('Standort übernommen' + (newAdrEntryGpsAccuracy != null ? ` (±${newAdrEntryGpsAccuracy}m)` : ''));
   });
 }
 function saveNewAdrEntry(){
@@ -3487,6 +3680,7 @@ function createNewAdrEntry(){
     email: val('new_adr_email'),
     koordinaten,
     koordinatenAktualisiertAm: todayDe(),
+    koordinatenGenauigkeit: newAdrEntryGpsAccuracy,
     zaehler,
     bauform: val('new_adr_bauform'),
     standort: val('new_adr_standort'),
@@ -3495,6 +3689,7 @@ function createNewAdrEntry(){
   };
   adressbuch.push(entry);
   saveAdressbuch();
+  newAdrEntryGpsAccuracy = null;
   closeModal();
   render();
   showToast('Eintrag angelegt');
@@ -3662,7 +3857,7 @@ function renderAdressbuch(){
               <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="flex:1;font-family:var(--font-mono);font-size:12px">
               <button class="icon-btn" onclick="captureGpsForAdr('${e.id}')" title="Aktuellen Standort übernehmen">📍</button>
             </div>
-            ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}</p>` : ''}
+            ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}${e.koordinatenGenauigkeit ? ` · Genauigkeit ±${e.koordinatenGenauigkeit}m` : ''}</p>` : ''}
           </div>
           <div class="field">
             <label style="display:flex;align-items:center;justify-content:space-between">
@@ -3846,7 +4041,7 @@ function openAuftragEditModal(id){
               onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="flex:1;font-family:var(--font-mono);font-size:13px">
             <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
           </div>
-          ${a.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(a.koordinatenAktualisiertAm)}</p>` : ''}
+          ${a.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(a.koordinatenAktualisiertAm)}${a.koordinatenGenauigkeit ? ` · Genauigkeit ±${a.koordinatenGenauigkeit}m` : ''}</p>` : ''}
         </div>
         <div class="field">
           <label>📞 Telefon</label>
@@ -4175,11 +4370,17 @@ function icsEscape(s){
 (async function init(){
   await loadAll();
   await tryRestoreFolder();
-  await tryRestorePhotoFolder();
+  await tryRestorePhotoZip();
   render();
   if(settings.remindersEnabled) startReminderChecks();
 })();
 
+function saveGpsAccuracyThreshold(val){
+  const n = parseInt(val, 10);
+  settings.gpsAccuracyThreshold = (n && n > 0) ? n : 10;
+  saveSettings();
+  showToast('GPS-Zielgenauigkeit: ±' + settings.gpsAccuracyThreshold + ' m');
+}
 function toggleReminders(enabled){
   if(enabled && Notification && Notification.permission !== 'granted'){
     Notification.requestPermission().then(perm => {
