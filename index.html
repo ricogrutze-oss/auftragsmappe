@@ -2428,16 +2428,24 @@ function phoneSearchUrl(name, adresse){
 --------------------------------------------------------------- */
 let html5QrScanner = null;
 
+let scannerFillTarget = null;
+let pendingScanCallback = null;
+
 function openScanner(){
+  scannerFillTarget = null;
+  pendingScanCallback = null;
+  openScannerModalUi('Zähler scannen', 'Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Adressbuch.');
+}
+function openScannerModalUi(title, hint){
   if(typeof Html5Qrcode === 'undefined'){
     showToast('Scanner konnte nicht geladen werden (kein Internet?)');
     return;
   }
   showModal(`
-    <div class="modal-head"><h3>Zähler scannen</h3><button class="close-x" onclick="closeScannerModal()">✕</button></div>
+    <div class="modal-head"><h3>${escapeHtml(title)}</h3><button class="close-x" onclick="closeScannerModal()">✕</button></div>
     <div class="modal-body">
       <div id="qr-reader" style="width:100%;border-radius:8px;overflow:hidden"></div>
-      <p class="hint">Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Adressbuch.</p>
+      <p class="hint">${hint}</p>
     </div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeScannerModal()">Abbrechen</button></div>
   `);
@@ -2460,13 +2468,23 @@ function closeScannerModal(){
   if(html5QrScanner){
     html5QrScanner.stop().catch(() => {}).finally(() => { html5QrScanner = null; });
   }
+  scannerFillTarget = null;
+  pendingScanCallback = null;
   closeModal();
 }
 
 function onScanSuccess(decodedText){
   if(html5QrScanner){ html5QrScanner.stop().catch(() => {}); html5QrScanner = null; }
-  closeModal();
   const val = decodedText.trim();
+  closeModal();
+
+  if(pendingScanCallback){
+    const cb = pendingScanCallback;
+    pendingScanCallback = null;
+    cb(val);
+    return;
+  }
+
   let found = auftraege.find(a => a.zaehler && a.zaehler.trim() === val);
   if(!found) found = auftraege.find(a => a.zaehler && a.zaehler.includes(val));
   if(found){
@@ -2772,6 +2790,49 @@ function confirmBulkTermine(){
   showToast(`${schedule.length} Termine erstellt und als Kalenderdatei heruntergeladen`);
 }
 
+/* ---------------------------------------------------------------
+   Zähler wechseln (mit Scan), Historie läuft über die normale
+   Feldänderungs-Historie von updateAuftragField
+--------------------------------------------------------------- */
+function openZaehlerWechselModal(auftragId, prefillVal){
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  showModal(`
+    <div class="modal-head"><h3>Zähler wechseln</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Bisheriger Zähler: <strong>${escapeHtml(a.zaehler || '–')}</strong></p>
+      <div class="field">
+        <label>Neuer Zähler</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="zw_new_zaehler" value="${escapeHtml(prefillVal||'')}" style="flex:1">
+          <button class="icon-btn" onclick="scanForZaehlerWechsel('${auftragId}')" title="Neuen Zähler scannen">📷</button>
+        </div>
+      </div>
+      <p class="hint">Der Wechsel wird im Verlauf festgehalten (alter → neuer Zähler, mit Datum) — bei Auftrag und Adressbuch.</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn primary" onclick="confirmZaehlerWechsel('${auftragId}')">Wechsel speichern</button>
+    </div>
+  `);
+}
+function scanForZaehlerWechsel(auftragId){
+  pendingScanCallback = (val) => openZaehlerWechselModal(auftragId, val);
+  openScannerModalUi('Neuen Zähler scannen', 'Halte den Barcode/QR-Code des neuen Zählers vor die Kamera.');
+}
+function confirmZaehlerWechsel(auftragId){
+  const el = document.getElementById('zw_new_zaehler');
+  const newVal = el ? el.value.trim() : '';
+  if(!newVal){ showToast('Bitte neue Zählernummer eingeben oder scannen'); return; }
+  const a = auftraege.find(x => x.id === auftragId);
+  if(!a) return;
+  const oldVal = a.zaehler || '–';
+  updateAuftragField(auftragId, 'zaehler', newVal, true);
+  closeModal();
+  render();
+  showToast(`Zähler gewechselt: ${oldVal} → ${newVal}`);
+}
+
 function navigateToAuftrag(id){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
@@ -2965,28 +3026,39 @@ let adrSearch = '';
 /* ---------------------------------------------------------------
    Manuelles Anlegen eines Adressbuch-Eintrags (Zähler + Standort Pflicht)
 --------------------------------------------------------------- */
-function openNewAdrEntryModal(){
+function openNewAdrEntryModal(prefill){
+  prefill = prefill || {};
+  const pv = (k) => escapeHtml(prefill[k] || '');
   showModal(`
     <div class="modal-head"><h3>Neuer Adressbuch-Eintrag</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <div class="field-row">
-        <div class="field"><label>Zähler(-nummer) <span class="req-star">*</span></label><input type="text" id="new_adr_zaehler"></div>
-        <div class="field"><label>Standort <span class="req-star">*</span></label><input type="text" id="new_adr_standort"></div>
+      <div class="field">
+        <label>Zähler(-nummer) <span class="req-star">*</span></label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="new_adr_zaehler" value="${pv('zaehler')}" style="flex:1">
+          <button class="icon-btn" onclick="scanForNewAdrZaehler()" title="Zähler scannen">📷</button>
+        </div>
       </div>
-      <div class="field"><label>Kundenname</label><input type="text" id="new_adr_kundenname"></div>
-      <div class="field"><label>Adresse</label><input type="text" id="new_adr_adresse"></div>
+      <div class="field">
+        <label>GPS-Koordinaten <span class="req-star">*</span></label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="new_adr_koordinaten" value="${pv('koordinaten')}" placeholder="52.130, 11.630" style="flex:1;font-family:var(--font-mono);font-size:12px">
+          <button class="icon-btn" onclick="captureGpsForNewEntry()" title="Aktuellen Standort übernehmen">📍</button>
+        </div>
+      </div>
+      <div class="field"><label>Standort</label><input type="text" id="new_adr_standort" value="${pv('standort')}"></div>
+      <div class="field"><label>Kundenname</label><input type="text" id="new_adr_kundenname" value="${pv('kundenname')}"></div>
+      <div class="field"><label>Adresse</label><input type="text" id="new_adr_adresse" value="${pv('adresse')}"></div>
       <div class="field-row">
-        <div class="field"><label>Telefonnummer</label><input type="text" id="new_adr_telefon"></div>
-        <div class="field"><label>E-Mail</label><input type="text" id="new_adr_email"></div>
+        <div class="field"><label>Telefonnummer</label><input type="text" id="new_adr_telefon" value="${pv('telefon')}"></div>
+        <div class="field"><label>E-Mail</label><input type="text" id="new_adr_email" value="${pv('email')}"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Kundencode</label><input type="text" id="new_adr_kundencode"></div>
-        <div class="field"><label>Zählerplatz-ID</label><input type="text" id="new_adr_zaehlerplatzid"></div>
+        <div class="field"><label>Kundencode</label><input type="text" id="new_adr_kundencode" value="${pv('kundencode')}"></div>
+        <div class="field"><label>Zählerplatz-ID</label><input type="text" id="new_adr_zaehlerplatzid" value="${pv('zaehlerplatzid')}"></div>
       </div>
-      <div class="field-row">
-        <div class="field"><label>Bauform Zähler</label><input type="text" id="new_adr_bauform"></div>
-        <div class="field"><label>Koordinaten</label><input type="text" id="new_adr_koordinaten" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px"></div>
-      </div>
+      <div class="field"><label>Bauform Zähler</label><input type="text" id="new_adr_bauform" value="${pv('bauform')}"></div>
+      <div class="field"><label>Notiz</label><textarea id="new_adr_notiz" rows="2">${pv('notiz')}</textarea></div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
@@ -2994,18 +3066,42 @@ function openNewAdrEntryModal(){
     </div>
   `);
 }
+function scanForNewAdrZaehler(){
+  const fv = (id) => document.getElementById(id)?.value.trim() || '';
+  const draft = {
+    zaehler: '',
+    koordinaten: fv('new_adr_koordinaten'),
+    standort: fv('new_adr_standort'),
+    kundenname: fv('new_adr_kundenname'),
+    adresse: fv('new_adr_adresse'),
+    telefon: fv('new_adr_telefon'),
+    email: fv('new_adr_email'),
+    kundencode: fv('new_adr_kundencode'),
+    zaehlerplatzid: fv('new_adr_zaehlerplatzid'),
+    bauform: fv('new_adr_bauform'),
+    notiz: fv('new_adr_notiz'),
+  };
+  pendingScanCallback = (val) => {
+    draft.zaehler = val;
+    openNewAdrEntryModal(draft);
+  };
+  openScannerModalUi('Zähler scannen', 'Halte den Barcode/QR-Code der Zählernummer vor die Kamera — deine übrigen Eingaben bleiben erhalten.');
+}
+function captureGpsForNewEntry(){
+  captureGps((coords) => {
+    const el = document.getElementById('new_adr_koordinaten');
+    if(el) el.value = fmtCoords(coords);
+    showToast('Standort übernommen');
+  });
+}
 function saveNewAdrEntry(){
   const val = (id) => document.getElementById(id)?.value.trim() || '';
   const zaehler = val('new_adr_zaehler');
   const standort = val('new_adr_standort');
-  if(!zaehler || !standort){
-    showToast('Zähler und Standort sind Pflichtfelder');
-    return;
-  }
   const koordinatenRaw = val('new_adr_koordinaten');
   const koordinaten = koordinatenRaw ? parseCoords(koordinatenRaw) : null;
-  if(koordinatenRaw && !koordinaten){
-    showToast('Ungültiges Koordinatenformat, z.B. 52.130, 11.630');
+  if(!zaehler || !koordinaten){
+    showToast('Zähler und GPS-Koordinaten sind Pflichtfelder');
     return;
   }
   const entry = {
@@ -3017,10 +3113,11 @@ function saveNewAdrEntry(){
     telefonnummer: val('new_adr_telefon'),
     email: val('new_adr_email'),
     koordinaten,
-    koordinatenAktualisiertAm: koordinaten ? todayDe() : '',
+    koordinatenAktualisiertAm: todayDe(),
     zaehler,
     bauform: val('new_adr_bauform'),
     standort,
+    notiz: val('new_adr_notiz'),
     history: [{ ts: nowIso(), field:'angelegt', old:'', new:'manuell angelegt' }]
   };
   adressbuch.push(entry);
@@ -3095,6 +3192,7 @@ function navigateToAdr(id){
 }
 
 function jumpToAdressbuchEntry(id){
+  if(adrMapInstance){ adrMapInstance.remove(); adrMapInstance = null; }
   adrViewMode = 'liste';
   adrDetailsOpen[id] = true;
   render();
@@ -3164,6 +3262,12 @@ function renderAdressbuch(){
           onchange="updateAdrField('${e.id}','adresse', this.value)">
         <input class="adr-phone-input" type="text" value="${escapeHtml(e.telefonnummer)}" placeholder="Telefonnummer"
           onchange="updateAdrField('${e.id}','telefonnummer', this.value)">
+        <div style="display:flex;gap:8px;margin-top:2px">
+          <input class="adr-addr-input" type="text" value="${escapeHtml(e.zaehler||'')}" placeholder="Zähler"
+            onchange="updateAdrField('${e.id}','zaehler', this.value)" style="flex:1;font-family:var(--font-mono);font-size:12.5px">
+          <input class="adr-addr-input" type="text" value="${escapeHtml(e.standort||'')}" placeholder="Standort"
+            onchange="updateAdrField('${e.id}','standort', this.value)" style="flex:1">
+        </div>
         ${mostRecentUpdateStr(e) ? `<span style="font-size:11px;color:var(--ink-soft)">Zuletzt geändert: ${mostRecentUpdateStr(e)}</span>` : ''}
       </div>
       <div class="adr-card-actions">
@@ -3178,10 +3282,6 @@ function renderAdressbuch(){
           <div class="field"><label>E-Mail</label><input class="cell-input" type="text" value="${escapeHtml(e.email||'')}" onchange="updateAdrField('${e.id}','email', this.value)">${fieldUpdateHint(e,'email')}</div>
           <div class="field-row">
             <div class="field"><label>Zählerplatz-ID</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehlerplatzId||'')}" onchange="updateAdrField('${e.id}','zaehlerplatzId', this.value)" style="font-family:var(--font-mono);font-size:12px"></div>
-            <div class="field"><label>Standort</label><input class="cell-input" type="text" value="${escapeHtml(e.standort||'')}" onchange="updateAdrField('${e.id}','standort', this.value)">${fieldUpdateHint(e,'standort')}</div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label>Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehler||'')}" onchange="updateAdrField('${e.id}','zaehler', this.value)">${fieldUpdateHint(e,'zaehler')}</div>
             <div class="field"><label>Bauform Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.bauform||'')}" onchange="updateAdrField('${e.id}','bauform', this.value)"></div>
           </div>
           <div class="field"><label>Koordinaten</label>
@@ -3190,6 +3290,14 @@ function renderAdressbuch(){
               <button class="icon-btn" onclick="captureGpsForAdr('${e.id}')" title="Aktuellen Standort übernehmen">📍</button>
             </div>
             ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}</p>` : ''}
+          </div>
+          <div class="field">
+            <label style="display:flex;align-items:center;justify-content:space-between">
+              Notiz
+              <button type="button" class="icon-btn" onclick="startDictation('adr_notiz_${e.id}')" title="Diktieren">🎙️</button>
+            </label>
+            <textarea class="cell-input" id="adr_notiz_${e.id}" rows="2" onchange="updateAdrField('${e.id}','notiz', this.value)">${escapeHtml(e.notiz||'')}</textarea>
+            ${fieldUpdateHint(e,'notiz')}
           </div>
           <p class="hint">Kundencode: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
         </div>` : ''}
@@ -3371,6 +3479,7 @@ function openAuftragEditModal(id){
       <div class="settings-row" style="margin-top:6px">
         <button class="btn small" onclick="navigateToAuftrag('${a.id}')">🧭 Navigation</button>
         <button class="btn small" onclick="openTerminModal('${a.id}')">📅 Termin</button>
+        <button class="btn small" onclick="openZaehlerWechselModal('${a.id}')">🔄 Zähler wechseln</button>
         <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
         <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Adressbuch</button>
       </div>
