@@ -636,7 +636,8 @@ function runToastUndo(){
    a standalone hosted app (localStorage + optional linked folder)
 --------------------------------------------------------------- */
 const hasClaudeStorage = (typeof window.storage !== 'undefined');
-const FS_SUPPORTED = ('showDirectoryPicker' in window);
+const IS_MOBILE_UA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+const FS_SUPPORTED = ('showDirectoryPicker' in window) && !IS_MOBILE_UA;
 let folderHandle = null;
 let folderNeedsPermission = false;
 let folderSyncTimer = null;
@@ -763,6 +764,23 @@ function triggerPhotoCapture(auftragId){
   document.getElementById('photoInput').click();
 }
 
+async function sharePhotoBlob(blob, filename){
+  const file = new File([blob], filename, { type: 'image/jpeg' });
+  if(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
+    try{
+      await navigator.share({ files: [file], title: filename });
+      showToast('Foto geteilt — z.B. nach OneDrive speichern');
+      return;
+    }catch(e){
+      if(e && e.name === 'AbortError'){
+        showToast('Foto im App-Speicher gesichert (Teilen abgebrochen)');
+        return;
+      }
+    }
+  }
+  showToast('Foto im App-Speicher gesichert (Teilen auf diesem Gerät nicht verfügbar)');
+}
+
 function nextPhotoFilename(a, kundencode, zaehler, datum){
   const base = `${kundencode}_${zaehler}_${datum}`;
   const existing = (a.photoFilenames || []).map(f => f.replace(/\.jpg$/,''));
@@ -797,9 +815,15 @@ document.getElementById('photoInput').addEventListener('change', async function(
         await kvSet('photo_' + photoTargetAuftragId, dataUrl);
       }
     } else {
-      // No zip linked — local storage only realistically fits a single photo.
+      // No zip linked (typically mobile) — local storage only realistically
+      // fits a single photo. Offer to share it out (e.g. to OneDrive) right away,
+      // using the same filename scheme as the desktop file storage.
       await kvSet('photo_' + photoTargetAuftragId, dataUrl);
-      showToast('Foto gespeichert (App-Speicher, nur 1 Foto möglich — für mehrere Fotos die Foto-Datei in den Einstellungen verknüpfen)');
+      const kundencode = sanitizeFilename(a ? a.kundencode : '' || 'ohne-kundencode');
+      const zaehler = sanitizeFilename(a ? a.zaehler : '' || 'ohne-zaehlernummer');
+      const datum = todayDe().split('.').join('-');
+      const shareFilename = `${kundencode}_${zaehler}_${datum}.jpg`;
+      await sharePhotoBlob(blob, shareFilename);
     }
     refreshPhotoArea(photoTargetAuftragId);
   }catch(err){
