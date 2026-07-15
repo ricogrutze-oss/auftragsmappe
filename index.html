@@ -516,6 +516,7 @@
 <input type="file" id="csvInput" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" style="display:none">
 <input type="file" id="backupInput" accept=".json" style="display:none">
 <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+<datalist id="standortSuggestions"></datalist>
 
 <button class="fab-scan" onclick="openScanner()" title="Zähler scannen">📷</button>
 
@@ -548,6 +549,8 @@ let terminModalAuftragId = null;
 let historyModalTarget = null;
 let viewMode = { offen: 'liste', erledigt: 'liste', adressbuch: 'liste' };
 let selection = { offen: new Set(), erledigt: new Set() };
+let distanceSortActive = { offen: false, erledigt: false };
+let userLocationCache = null;
 let mapInstances = {};
 const DEFAULT_VISIBLE_COLUMNS = {
   kundenname: true, vorgang: true, auftragsbeschreibung: true, status: true, telefonnummer: true, email: true, adresse: true,
@@ -596,12 +599,21 @@ function parseCoords(str){
 }
 function fmtCoords(c){ return c ? `${c.lat.toFixed(5)}, ${c.lon.toFixed(5)}` : ''; }
 
-function showToast(msg){
+let toastUndoFn = null;
+function showToast(msg, undoFn){
   const t = document.getElementById('toast');
-  t.textContent = msg;
+  toastUndoFn = undoFn || null;
+  t.innerHTML = escapeHtml(msg) + (undoFn
+    ? ` <button onclick="runToastUndo()" style="margin-left:10px;background:#fff;color:var(--teal-deep);border:none;border-radius:14px;padding:3px 12px;font-size:12px;font-weight:600;cursor:pointer">Rückgängig</button>`
+    : '');
   t.style.display = 'block';
   clearTimeout(t._h);
-  t._h = setTimeout(()=>{ t.style.display='none'; }, 3200);
+  t._h = setTimeout(()=>{ t.style.display='none'; toastUndoFn=null; }, undoFn ? 6000 : 3200);
+}
+function runToastUndo(){
+  if(toastUndoFn){ toastUndoFn(); }
+  toastUndoFn = null;
+  document.getElementById('toast').style.display = 'none';
 }
 
 /* ---------------------------------------------------------------
@@ -1761,6 +1773,7 @@ function switchTab(tab){
 
 function render(){
   updateReconnectBanner();
+  updateStandortSuggestions();
   const offen = auftraege.filter(a => a.status !== 'erledigt');
   const erledigt = auftraege.filter(a => a.status === 'erledigt');
   const mitTermin = auftraege.filter(a => a.termin);
@@ -1860,11 +1873,20 @@ function toggleTerminePast(){
   render();
 }
 
-function renderTermine(list, allAuftraege){
-  const todayIso = new Date().toISOString().slice(0,10);
+let termineViewMode = 'agenda'; // 'agenda' | 'woche'
+let termineWeekOffset = 0;
 
-  // Build one combined list of agenda entries: Termine + Rückrufe (Wiedervorlage)
-  let entries = [];
+function toggleTermineViewMode(mode){
+  termineViewMode = mode;
+  render();
+}
+function shiftTermineWeek(delta){
+  termineWeekOffset += delta;
+  render();
+}
+
+function buildAgendaEntries(list, allAuftraege){
+  const entries = [];
   list.forEach(a => {
     entries.push({ type:'termin', auftrag:a, dateIso:a.termin.dateIso, date:a.termin.date, time:a.termin.time });
   });
@@ -1873,6 +1895,97 @@ function renderTermine(list, allAuftraege){
       entries.push({ type:'rueckruf', auftrag:a, dateIso:a.wiedervorlage.datum, date:fmtDateDe(a.wiedervorlage.datum), time:a.wiedervorlage.zeit||'09:00' });
     }
   });
+  return entries;
+}
+
+const STATUS_COLOR_MAP = { offen:'#55635f', ohne_termin:'#4a6b8a', in_bearbeitung:'#b5790a', termin_vereinbart:'#2b5a8c',
+  kunde_rueckmeldung:'#6a4c8c', anlage_nicht_fertig:'#a3392f', warte_planung:'#b5540a',
+  inbetriebnahme_erfolgt:'#106b78', erledigt:'#2c7a4b' };
+
+function agendaItemHtml(entry){
+  const a = entry.auftrag;
+  if(entry.type === 'rueckruf'){
+    return `
+      <div class="agenda-item" onclick="openAuftragEditModal('${a.id}')" style="border-left:3px solid var(--purple)">
+        <div class="agenda-time">📞 ${entry.time}</div>
+        <div class="agenda-main">
+          <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
+          <div class="agenda-sub">Rückruf${a.telefonnummer ? ' · ' + escapeHtml(a.telefonnummer) : ''}</div>
+        </div>
+        <div class="pop-status" style="background:var(--purple-bg);color:var(--purple);white-space:nowrap">Rückruf</div>
+      </div>`;
+  }
+  const color = STATUS_COLOR_MAP[a.status] || '#55635f';
+  return `
+    <div class="agenda-item" onclick="openAuftragEditModal('${a.id}')">
+      <div class="agenda-time">${entry.time}</div>
+      <div class="agenda-main">
+        <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
+        <div class="agenda-sub">${escapeHtml(a.vorgang)}${a.adresse ? ' · ' + escapeHtml(a.adresse) : ''}</div>
+      </div>
+      <div class="pop-status" style="background:${color}22;color:${color};white-space:nowrap">${STATUS[a.status].label}</div>
+    </div>`;
+}
+
+function renderTermineWeek(entries){
+  const now = new Date();
+  const dayOfWeek = (now.getDay()+6)%7; // Monday = 0
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - dayOfWeek + termineWeekOffset*7);
+  monday.setHours(0,0,0,0);
+
+  const todayIso = new Date().toISOString().slice(0,10);
+  const dayNames = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
+  const days = [];
+  for(let i=0;i<7;i++){
+    const d = new Date(monday);
+    d.setDate(monday.getDate()+i);
+    const dateIso = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    days.push({ dateIso, dateDe: `${pad(d.getDate())}.${pad(d.getMonth()+1)}.`, name: dayNames[i], isToday: dateIso === todayIso });
+  }
+  const weekLabel = `${days[0].dateDe} – ${days[6].dateDe} ${monday.getFullYear()} · KW ${getIsoWeek(monday)}`;
+
+  const groupsHtml = days.map(day => {
+    const dayEntries = entries.filter(e => e.dateIso === day.dateIso).sort((a,b)=>a.time.localeCompare(b.time));
+    return `
+      <div class="agenda-group">
+        <div class="agenda-date-header ${day.isToday?'is-today':''}">${day.name}, ${day.dateDe} ${monday.getFullYear()}${day.isToday?' · Heute':''}</div>
+        ${dayEntries.length ? dayEntries.map(agendaItemHtml).join('') : `<div class="agenda-item" style="cursor:default"><span class="muted" style="font-size:12.5px">Keine Termine</span></div>`}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="view-toggle">
+      <button class="btn small" onclick="shiftTermineWeek(-1)">◀ Vorherige Woche</button>
+      <span class="muted" style="font-size:12.5px">${weekLabel}</span>
+      <button class="btn small" onclick="shiftTermineWeek(1)">Nächste Woche ▶</button>
+      ${termineWeekOffset !== 0 ? `<button class="btn small ghost" onclick="termineWeekOffset=0;render()">Heute</button>` : ''}
+    </div>
+    <div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
+}
+function getIsoWeek(d){
+  const date = new Date(d.getTime());
+  date.setHours(0,0,0,0);
+  date.setDate(date.getDate() + 3 - (date.getDay()+6)%7);
+  const week1 = new Date(date.getFullYear(),0,4);
+  return 1 + Math.round(((date-week1)/86400000 - 3 + (week1.getDay()+6)%7)/7);
+}
+
+function renderTermine(list, allAuftraege){
+  const todayIso = new Date().toISOString().slice(0,10);
+  const viewToggleHtml = `
+    <div class="view-toggle">
+      <button class="btn small ${termineViewMode==='agenda'?'active':''}" onclick="toggleTermineViewMode('agenda')">📋 Agenda</button>
+      <button class="btn small ${termineViewMode==='woche'?'active':''}" onclick="toggleTermineViewMode('woche')">🗓️ Woche</button>
+    </div>`;
+
+  if(termineViewMode === 'woche'){
+    const allEntries = buildAgendaEntries(auftraege.filter(a=>a.termin), allAuftraege);
+    return viewToggleHtml + renderTermineWeek(allEntries);
+  }
+
+  // Build one combined list of agenda entries: Termine + Rückrufe (Wiedervorlage)
+  let entries = buildAgendaEntries(list, allAuftraege);
 
   // By default: hide erledigt Aufträge and anything before today — done is done.
   const hiddenCount = entries.filter(e => e.auftrag.status === 'erledigt' || e.dateIso < todayIso).length;
@@ -1888,10 +2001,10 @@ function renderTermine(list, allAuftraege){
     </div>` : '';
 
   if(entries.length === 0){
-    return toggleBarHtml || `<div class="empty-state">
+    return viewToggleHtml + (toggleBarHtml || `<div class="empty-state">
       <div class="big">Noch keine Termine oder Rückrufe</div>
       <div>Termine (📅) und Rückruf-Erinnerungen (📞) erscheinen hier zusammen, chronologisch nach Tag.</div>
-    </div>`;
+    </div>`);
   }
 
   const sorted = entries.slice().sort((a,b) => (a.dateIso + 'T' + a.time).localeCompare(b.dateIso + 'T' + b.time));
@@ -1906,37 +2019,10 @@ function renderTermine(list, allAuftraege){
     currentGroup.items.push(entry);
   });
 
-  const statusColorMap = { offen:'#55635f', ohne_termin:'#4a6b8a', in_bearbeitung:'#b5790a', termin_vereinbart:'#2b5a8c',
-    kunde_rueckmeldung:'#6a4c8c', anlage_nicht_fertig:'#a3392f', warte_planung:'#b5540a',
-    inbetriebnahme_erfolgt:'#106b78', erledigt:'#2c7a4b' };
-
   const groupsHtml = groups.map(g => {
     const isPast = g.dateIso < todayIso;
     const isToday = g.dateIso === todayIso;
-    const itemsHtml = g.items.map(entry => {
-      const a = entry.auftrag;
-      if(entry.type === 'rueckruf'){
-        return `
-          <div class="agenda-item" onclick="openAuftragEditModal('${a.id}')" style="border-left:3px solid var(--purple)">
-            <div class="agenda-time">📞 ${entry.time}</div>
-            <div class="agenda-main">
-              <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
-              <div class="agenda-sub">Rückruf${a.telefonnummer ? ' · ' + escapeHtml(a.telefonnummer) : ''}</div>
-            </div>
-            <div class="pop-status" style="background:var(--purple-bg);color:var(--purple);white-space:nowrap">Rückruf</div>
-          </div>`;
-      }
-      const color = statusColorMap[a.status] || '#55635f';
-      return `
-        <div class="agenda-item" onclick="openAuftragEditModal('${a.id}')">
-          <div class="agenda-time">${entry.time}</div>
-          <div class="agenda-main">
-            <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
-            <div class="agenda-sub">${escapeHtml(a.vorgang)}${a.adresse ? ' · ' + escapeHtml(a.adresse) : ''}</div>
-          </div>
-          <div class="pop-status" style="background:${color}22;color:${color};white-space:nowrap">${STATUS[a.status].label}</div>
-        </div>`;
-    }).join('');
+    const itemsHtml = g.items.map(agendaItemHtml).join('');
     return `
       <div class="agenda-group">
         <div class="agenda-date-header ${isPast?'is-past':''} ${isToday?'is-today':''}">
@@ -1946,7 +2032,7 @@ function renderTermine(list, allAuftraege){
       </div>`;
   }).join('');
 
-  return `${toggleBarHtml}<div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
+  return `${viewToggleHtml}${toggleBarHtml}<div class="grid-wrap" style="padding:8px 0">${groupsHtml}</div>`;
 }
 
 function daysSinceLastBackup(){
@@ -2027,6 +2113,17 @@ function renderEinstellungen(){
         <button class="btn" onclick="openSettingsModal()">Absenderadresse</button>
       </div>
       <p class="hint">${settings.organizerEmail ? 'Aktuell: ' + escapeHtml(settings.organizerEmail) : 'Noch keine Absenderadresse hinterlegt.'}</p>
+    </div>
+
+    <div class="settings-section">
+      <h4>Erinnerungen</h4>
+      <div class="settings-row">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:500">
+          <input type="checkbox" id="remindersToggle" ${settings.remindersEnabled ? 'checked' : ''} onchange="toggleReminders(this.checked)">
+          Benachrichtigung bei fälligen Rückrufen
+        </label>
+      </div>
+      <p class="hint">Zeigt eine Benachrichtigung, wenn ein Rückruf-Termin fällig ist — funktioniert nur, solange die App in einem Tab/Fenster geöffnet ist, kein echtes Push wenn die App komplett geschlossen ist (das kann ein Browser technisch nicht ohne Server anbieten).</p>
     </div>
 
     <div class="settings-section">
@@ -2271,7 +2368,9 @@ function renderTabView(tabKey, fullList){
         <span class="muted" style="font-size:12px">Farbe:</span>
         <button class="btn small ${mapColorMode[tabKey]==='status'?'active':''}" onclick="setMapColorMode('${tabKey}','status')">Status</button>
         <button class="btn small ${mapColorMode[tabKey]==='vorgang'?'active':''}" onclick="setMapColorMode('${tabKey}','vorgang')">Vorgangstyp</button>
-      ` : ''}
+      ` : `
+        <button class="btn small ${distanceSortActive[tabKey]?'active':''}" onclick="toggleDistanceSort('${tabKey}')">📍 Nächste zuerst</button>
+      `}
       ${list.length !== fullList.length ? `<span class="count-pill" style="margin-left:6px">${list.length} von ${fullList.length}</span>` : ''}
     </div>`;
   const filterHtml = renderFilterBar(tabKey, fullList);
@@ -2360,6 +2459,11 @@ function initMapForTab(tabKey, list){
 
   const bounds = [];
   const sel = selection[tabKey];
+  const cluster = L.markerClusterGroup({
+    maxClusterRadius: 45,
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false
+  });
   withCoords.forEach(a => {
     const color = colorFor(a);
     const isSelected = sel.has(a.id);
@@ -2372,7 +2476,7 @@ function initMapForTab(tabKey, list){
       innerHtml = `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:${isSelected?'3px solid var(--teal)':'2px solid #fff'};box-shadow:0 0 0 1px ${color}${isSelected?', 0 0 6px rgba(31,92,86,.6)':''};display:flex;align-items:center;justify-content:center;font-size:${size-9}px;line-height:1">${isSelected ? '✓' : symbol}</div>`;
     }
     const icon = L.divIcon({ className:'', html: innerHtml, iconSize:[size,size], iconAnchor:[size/2,size/2] });
-    const marker = L.marker([a.koordinaten.lat, a.koordinaten.lon], { icon }).addTo(map);
+    const marker = L.marker([a.koordinaten.lat, a.koordinaten.lon], { icon });
     marker.bindPopup(`
       <div class="pop-code">${escapeHtml(a.kundencode)}</div>
       ${a.kundenname ? `<div>${escapeHtml(a.kundenname)}</div>` : ''}
@@ -2389,8 +2493,10 @@ function initMapForTab(tabKey, list){
         <button class="btn small primary" onclick="openAuftragEditModal('${a.id}')" style="flex:1">✏️ Bearbeiten</button>
       </div>
     `);
+    cluster.addLayer(marker);
     bounds.push([a.koordinaten.lat, a.koordinaten.lon]);
   });
+  map.addLayer(cluster);
   if(bounds.length === 1){ map.setView(bounds[0], 15); }
   else{ map.fitBounds(bounds, { padding: [30,30] }); }
 }
@@ -2833,6 +2939,31 @@ function confirmZaehlerWechsel(auftragId){
   showToast(`Zähler gewechselt: ${oldVal} → ${newVal}`);
 }
 
+function updateStandortSuggestions(){
+  const el = document.getElementById('standortSuggestions');
+  if(!el) return;
+  const values = Array.from(new Set(adressbuch.map(e => (e.standort||'').trim()).filter(Boolean))).sort();
+  el.innerHTML = values.map(v => `<option value="${escapeHtml(v)}">`).join('');
+}
+function toggleDistanceSort(tabKey){
+  if(distanceSortActive[tabKey]){
+    distanceSortActive[tabKey] = false;
+    render();
+    return;
+  }
+  if(!navigator.geolocation){ showToast('Standortzugriff wird nicht unterstützt'); return; }
+  showToast('Standort wird ermittelt…');
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      userLocationCache = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      distanceSortActive[tabKey] = true;
+      render();
+    },
+    () => showToast('Standort konnte nicht ermittelt werden'),
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+}
+
 function navigateToAuftrag(id){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
@@ -2994,10 +3125,21 @@ function renderAuftragTable(list, isErledigtTab){
   const sel = selection[tabKey];
   const allChecked = list.every(a => sel.has(a.id));
 
-  const rows = list.slice().sort((a,b) => (a.kundencode||'').localeCompare(b.kundencode||'')).map(a => `
+  let sortedList;
+  if(distanceSortActive[tabKey] && userLocationCache){
+    const withDist = list.filter(a => a.koordinaten);
+    const withoutDist = list.filter(a => !a.koordinaten);
+    withDist.sort((a,b) => haversineKm(userLocationCache.lat, userLocationCache.lon, a.koordinaten.lat, a.koordinaten.lon)
+                          - haversineKm(userLocationCache.lat, userLocationCache.lon, b.koordinaten.lat, b.koordinaten.lon));
+    sortedList = withDist.concat(withoutDist);
+  } else {
+    sortedList = list.slice().sort((a,b) => (a.kundencode||'').localeCompare(b.kundencode||''));
+  }
+
+  const rows = sortedList.map(a => `
     <tr>
       <td data-label="Auswahl"><input type="checkbox" ${sel.has(a.id)?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"></td>
-      <td data-label="Kundencode"><span class="code-sm">${escapeHtml(a.kundencode)}</span></td>
+      <td data-label="Kundencode"><span class="code-sm">${escapeHtml(a.kundencode)}</span>${(distanceSortActive[tabKey] && userLocationCache && a.koordinaten) ? ` <span class="muted" style="font-size:11px">(${haversineKm(userLocationCache.lat, userLocationCache.lon, a.koordinaten.lat, a.koordinaten.lon).toFixed(1)} km)</span>` : ''}</td>
       ${cols.map(key => getCellRenderer(key)(a)).join('')}
       <td data-label="Aktionen">
         <div class="row-actions">
@@ -3046,7 +3188,7 @@ function openNewAdrEntryModal(prefill){
           <button class="icon-btn" onclick="captureGpsForNewEntry()" title="Aktuellen Standort übernehmen">📍</button>
         </div>
       </div>
-      <div class="field"><label>Standort</label><input type="text" id="new_adr_standort" value="${pv('standort')}"></div>
+      <div class="field"><label>Standort</label><input type="text" id="new_adr_standort" value="${pv('standort')}" list="standortSuggestions"></div>
       <div class="field"><label>Kundenname</label><input type="text" id="new_adr_kundenname" value="${pv('kundenname')}"></div>
       <div class="field"><label>Adresse</label><input type="text" id="new_adr_adresse" value="${pv('adresse')}"></div>
       <div class="field-row">
@@ -3098,12 +3240,40 @@ function saveNewAdrEntry(){
   const val = (id) => document.getElementById(id)?.value.trim() || '';
   const zaehler = val('new_adr_zaehler');
   const standort = val('new_adr_standort');
+  const adresse = val('new_adr_adresse');
   const koordinatenRaw = val('new_adr_koordinaten');
   const koordinaten = koordinatenRaw ? parseCoords(koordinatenRaw) : null;
   if(!zaehler || !koordinaten){
     showToast('Zähler und GPS-Koordinaten sind Pflichtfelder');
     return;
   }
+  const dupZaehler = adressbuch.find(e => e.zaehler && norm(e.zaehler) === norm(zaehler));
+  const dupAdresse = adresse && adressbuch.find(e => e.adresse && norm(e.adresse) === norm(adresse));
+  if(dupZaehler || dupAdresse){
+    const reasons = [];
+    if(dupZaehler) reasons.push(`Zähler „${dupZaehler.zaehler}" (${dupZaehler.kundenname || dupZaehler.adresse || 'ohne Namen'})`);
+    if(dupAdresse && dupAdresse !== dupZaehler) reasons.push(`Adresse „${dupAdresse.adresse}" (${dupAdresse.kundenname || 'ohne Namen'})`);
+    showModal(`
+      <div class="modal-head"><h3>Möglicher Doppeleintrag</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">
+        <p class="hint" style="margin-top:0">Es gibt schon einen ähnlichen Eintrag:</p>
+        <ul style="margin:0 0 10px;padding-left:18px;font-size:13px">${reasons.map(r=>`<li>${escapeHtml(r)}</li>`).join('')}</ul>
+        <p class="hint">Trotzdem einen neuen, separaten Eintrag anlegen?</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+        <button class="btn primary" onclick="createNewAdrEntry()">Trotzdem anlegen</button>
+      </div>
+    `);
+    return;
+  }
+  createNewAdrEntry();
+}
+function createNewAdrEntry(){
+  const val = (id) => document.getElementById(id)?.value.trim() || '';
+  const zaehler = val('new_adr_zaehler');
+  const koordinatenRaw = val('new_adr_koordinaten');
+  const koordinaten = koordinatenRaw ? parseCoords(koordinatenRaw) : null;
   const entry = {
     id: uid(),
     kundencode: val('new_adr_kundencode'),
@@ -3116,7 +3286,7 @@ function saveNewAdrEntry(){
     koordinatenAktualisiertAm: todayDe(),
     zaehler,
     bauform: val('new_adr_bauform'),
-    standort,
+    standort: val('new_adr_standort'),
     notiz: val('new_adr_notiz'),
     history: [{ ts: nowIso(), field:'angelegt', old:'', new:'manuell angelegt' }]
   };
@@ -3265,7 +3435,7 @@ function renderAdressbuch(){
         <div style="display:flex;gap:8px;margin-top:2px">
           <input class="adr-addr-input" type="text" value="${escapeHtml(e.zaehler||'')}" placeholder="Zähler"
             onchange="updateAdrField('${e.id}','zaehler', this.value)" style="flex:1;font-family:var(--font-mono);font-size:12.5px">
-          <input class="adr-addr-input" type="text" value="${escapeHtml(e.standort||'')}" placeholder="Standort"
+          <input class="adr-addr-input" type="text" value="${escapeHtml(e.standort||'')}" placeholder="Standort" list="standortSuggestions"
             onchange="updateAdrField('${e.id}','standort', this.value)" style="flex:1">
         </div>
         ${mostRecentUpdateStr(e) ? `<span style="font-size:11px;color:var(--ink-soft)">Zuletzt geändert: ${mostRecentUpdateStr(e)}</span>` : ''}
@@ -3378,6 +3548,35 @@ function updateAuftragField(id, field, value, silent){
 function setStatus(id, newStatus, silent){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
+  if(a.status === newStatus) return;
+  if(newStatus === 'erledigt' && !silent){
+    const missing = [];
+    if(!a.telefonnummer) missing.push('Telefonnummer');
+    if(!a.adresse) missing.push('Adresse');
+    if(!a.koordinaten) missing.push('Koordinaten');
+    if(missing.length > 0){
+      confirmErledigtWithMissing(id, newStatus, missing);
+      return;
+    }
+  }
+  applyStatus(id, newStatus, silent);
+}
+function confirmErledigtWithMissing(id, newStatus, missing){
+  showModal(`
+    <div class="modal-head"><h3>Fehlende Daten</h3><button class="close-x" onclick="closeModal();render();">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Diesem Auftrag fehlen: <strong>${escapeHtml(missing.join(', '))}</strong>.</p>
+      <p class="hint">Trotzdem als erledigt markieren?</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal();render();">Abbrechen</button>
+      <button class="btn primary" onclick="applyStatus('${id}','${newStatus}');closeModal();">Trotzdem markieren</button>
+    </div>
+  `);
+}
+function applyStatus(id, newStatus, silent){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
   const old = a.status;
   if(old === newStatus) return;
   a.history.push({ ts: nowIso(), field:'status', old: STATUS[old].label, new: STATUS[newStatus].label });
@@ -3385,7 +3584,16 @@ function setStatus(id, newStatus, silent){
   saveAuftraege();
   if(!silent){
     render();
-    showToast(newStatus === 'erledigt' ? 'Als erledigt markiert' : 'Status aktualisiert');
+    const undo = () => {
+      const a2 = auftraege.find(x => x.id === id);
+      if(!a2) return;
+      a2.history.push({ ts: nowIso(), field:'status', old: STATUS[a2.status].label, new: STATUS[old].label + ' (rückgängig)' });
+      a2.status = old;
+      saveAuftraege();
+      render();
+      showToast('Status zurückgesetzt auf „' + STATUS[old].label + '"');
+    };
+    showToast(newStatus === 'erledigt' ? 'Als erledigt markiert' : 'Status aktualisiert', undo);
   }
 }
 
@@ -3741,7 +3949,54 @@ function icsEscape(s){
   await loadAll();
   await tryRestoreFolder();
   render();
+  if(settings.remindersEnabled) startReminderChecks();
 })();
+
+function toggleReminders(enabled){
+  if(enabled && Notification && Notification.permission !== 'granted'){
+    Notification.requestPermission().then(perm => {
+      if(perm === 'granted'){
+        settings.remindersEnabled = true;
+        saveSettings();
+        startReminderChecks();
+        showToast('Erinnerungen aktiviert');
+      } else {
+        settings.remindersEnabled = false;
+        saveSettings();
+        document.getElementById('remindersToggle').checked = false;
+        showToast('Benachrichtigungen wurden nicht erlaubt');
+      }
+    });
+  } else {
+    settings.remindersEnabled = enabled;
+    saveSettings();
+    if(!enabled && reminderInterval){ clearInterval(reminderInterval); reminderInterval = null; }
+    showToast(enabled ? 'Erinnerungen aktiviert' : 'Erinnerungen deaktiviert');
+  }
+}
+let reminderInterval = null;
+let remindedToday = {};
+function startReminderChecks(){
+  if(typeof Notification === 'undefined') return;
+  if(reminderInterval) clearInterval(reminderInterval);
+  checkDueReminders();
+  reminderInterval = setInterval(checkDueReminders, 5 * 60 * 1000); // alle 5 Minuten
+}
+function checkDueReminders(){
+  if(Notification.permission !== 'granted') return;
+  const todayIso = new Date().toISOString().slice(0,10);
+  auftraege.forEach(a => {
+    if(a.wiedervorlage && a.status !== 'erledigt' && a.wiedervorlage.datum <= todayIso){
+      const key = a.id + '_' + todayIso;
+      if(remindedToday[key]) return;
+      remindedToday[key] = true;
+      new Notification('📞 Rückruf fällig', {
+        body: `${a.kundencode} ${a.kundenname||''} — ${a.telefonnummer||'keine Nummer hinterlegt'}`,
+        tag: key
+      });
+    }
+  });
+}
 
 if('serviceWorker' in navigator && location.protocol !== 'file:'){
   window.addEventListener('load', () => {
