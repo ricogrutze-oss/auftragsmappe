@@ -640,8 +640,8 @@ const FS_SUPPORTED = ('showDirectoryPicker' in window);
 let folderHandle = null;
 let folderNeedsPermission = false;
 let folderSyncTimer = null;
-let photoZipHandle = null;
-let photoZipNeedsPermission = false;
+let photoFolderHandle = null;
+let photoFolderNeedsPermission = false;
 
 async function kvGet(key){
   if(hasClaudeStorage){
@@ -796,7 +796,7 @@ document.getElementById('photoInput').addEventListener('change', async function(
   try{
     const a = auftraege.find(x => x.id === photoTargetAuftragId);
     const { blob, dataUrl } = await compressImageFile(file, a);
-    const folderReady = photoZipHandle && !photoZipNeedsPermission;
+    const folderReady = photoFolderHandle && !photoFolderNeedsPermission;
 
     if(folderReady && a){
       if(!a.photoFilenames) a.photoFilenames = [];
@@ -832,14 +832,14 @@ document.getElementById('photoInput').addEventListener('change', async function(
 
 async function getPhotoSrcList(auftragId){
   const a = auftraege.find(x => x.id === auftragId);
-  const zipReady = photoZipHandle && !photoZipNeedsPermission;
-  if(a && a.photoFilenames && a.photoFilenames.length && zipReady){
-    const results = await Promise.all(a.photoFilenames.map(async (fn) => ({ filename: fn, src: await readPhotoFromZip(fn) })));
+  const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
+  if(a && a.photoFilenames && a.photoFilenames.length && folderReady2){
+    const results = await Promise.all(a.photoFilenames.map(async (fn) => ({ filename: fn, src: await readPhotoFromFolder(fn) })));
     return results.filter(r => r.src);
   }
   // legacy single-photo fallback (App-Speicher oder alte photoFilename-Fotos)
-  if(a && a.photoFilename && zipReady){
-    const src = await readPhotoFromZip(a.photoFilename);
+  if(a && a.photoFilename && folderReady2){
+    const src = await readPhotoFromFolder(a.photoFilename);
     if(src) return [{ filename: a.photoFilename, src }];
   }
   const dataUrl = await kvGet('photo_' + auftragId);
@@ -879,9 +879,9 @@ async function openPhotoFull(auftragId, idx){
 
 async function deletePhoto(auftragId, filename){
   const a = auftraege.find(x => x.id === auftragId);
-  const zipReady = photoZipHandle && !photoZipNeedsPermission;
-  if(a && filename && zipReady){
-    await removePhotoFromZip(filename);
+  const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
+  if(a && filename && folderReady2){
+    await removePhotoFromFolder(filename);
     if(a.photoFilenames) a.photoFilenames = a.photoFilenames.filter(f => f !== filename);
     if(a.photoFilename === filename) a.photoFilename = ''; // legacy field cleanup
     saveAuftraege();
@@ -1010,11 +1010,11 @@ function updateReconnectBanner(){
       ⚠️ Verbindung zur Sicherungsdatei muss erneuert werden — aktuelle Daten wurden noch nicht geladen!
       <button class="btn small" onclick="reconnectFolder()">🔄 Jetzt verbinden</button>
     </div>`;
-  } else if(photoZipHandle && photoZipNeedsPermission){
+  } else if(photoFolderHandle && photoFolderNeedsPermission){
     el.style.display = '';
     el.innerHTML = `<div class="reconnect-banner">
-      ⚠️ Verbindung zur Foto-Datei muss erneuert werden — neue Fotos werden sonst nur lokal gespeichert!
-      <button class="btn small" onclick="reconnectPhotoZip()">🔄 Jetzt verbinden</button>
+      ⚠️ Verbindung zum Fotoordner muss erneuert werden — neue Fotos werden sonst nur lokal gespeichert!
+      <button class="btn small" onclick="reconnectPhotoFolder()">🔄 Jetzt verbinden</button>
     </div>`;
   } else {
     el.style.display = 'none';
@@ -1035,109 +1035,72 @@ async function reconnectFolder(){
     }
   }catch(e){ showToast('Verbindung zur Datei fehlgeschlagen'); }
 }
-async function choosePhotoZipNew(){
+async function choosePhotoFolder(){
   if(!FS_SUPPORTED){ showToast('Nur in Chrome/Edge auf dem Desktop verfügbar'); return; }
   try{
-    const handle = await window.showSaveFilePicker({
-      suggestedName: 'auftragsmappe-fotos.zip',
-      types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }]
-    });
-    photoZipHandle = handle;
-    photoZipNeedsPermission = false;
-    await idbSetHandle(handle, 'photoZip');
+    const handle = await window.showDirectoryPicker();
+    photoFolderHandle = handle;
+    photoFolderNeedsPermission = false;
+    await idbSetHandle(handle, 'photoFolder');
     render();
-    showToast('Neue Foto-Datei angelegt und verknüpft');
+    showToast('Fotoordner verknüpft — neue Fotos werden ab jetzt automatisch dort gespeichert');
   }catch(e){ /* cancelled */ }
 }
-async function choosePhotoZipExisting(){
-  if(!FS_SUPPORTED){ showToast('Nur in Chrome/Edge auf dem Desktop verfügbar'); return; }
+async function reconnectPhotoFolder(){
+  if(!photoFolderHandle) return;
   try{
-    const [handle] = await window.showOpenFilePicker({
-      types: [{ description: 'Auftragsmappe-Fotos', accept: { 'application/zip': ['.zip'] } }],
-      excludeAcceptAllOption: false,
-      multiple: false
-    });
-    photoZipHandle = handle;
-    photoZipNeedsPermission = false;
-    await idbSetHandle(handle, 'photoZip');
-    render();
-    showToast('Foto-Datei verknüpft — Fotos werden ab jetzt automatisch dort gespeichert');
-  }catch(e){ /* cancelled */ }
-}
-async function reconnectPhotoZip(){
-  if(!photoZipHandle) return;
-  try{
-    const perm = await photoZipHandle.requestPermission({ mode:'readwrite' });
+    const perm = await photoFolderHandle.requestPermission({ mode:'readwrite' });
     if(perm === 'granted'){
-      photoZipNeedsPermission = false;
+      photoFolderNeedsPermission = false;
       render();
-      showToast('Foto-Datei wieder verbunden');
+      showToast('Fotoordner wieder verbunden');
     } else {
       showToast('Zugriff wurde nicht erlaubt');
     }
   }catch(e){ showToast('Verbindung fehlgeschlagen'); }
 }
-async function tryRestorePhotoZip(){
+async function tryRestorePhotoFolder(){
   if(!FS_SUPPORTED) return;
-  const handle = await idbGetHandle('photoZip');
+  const handle = await idbGetHandle('photoFolder');
   if(!handle) return;
-  photoZipHandle = handle;
+  photoFolderHandle = handle;
   try{
     const perm = await handle.queryPermission({ mode:'readwrite' });
-    photoZipNeedsPermission = (perm !== 'granted');
-  }catch(e){ photoZipNeedsPermission = true; }
+    photoFolderNeedsPermission = (perm !== 'granted');
+  }catch(e){ photoFolderNeedsPermission = true; }
 }
 function sanitizeFilename(s){
   return (s||'').toString().trim().replace(/[\\/:*?"<>|]/g,'_') || 'unbenannt';
 }
-async function loadPhotoZip(){
-  const file = await photoZipHandle.getFile();
-  if(file.size === 0) return new JSZip();
-  const buf = await file.arrayBuffer();
-  return await JSZip.loadAsync(buf);
-}
-async function savePhotoZipHandle(zip){
-  const blob = await zip.generateAsync({ type:'blob', compression:'STORE' });
-  const writable = await photoZipHandle.createWritable();
-  await writable.write(blob);
-  await writable.close();
-}
 async function savePhotoToFolderNamed(filename, blob){
-  if(!photoZipHandle || photoZipNeedsPermission) return false;
+  if(!photoFolderHandle || photoFolderNeedsPermission) return false;
   try{
-    const zip = await loadPhotoZip();
-    zip.file(filename, blob);
-    await savePhotoZipHandle(zip);
+    const fileHandle = await photoFolderHandle.getFileHandle(filename, { create:true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
     return filename;
   }catch(e){ console.error('savePhotoToFolderNamed', e); return false; }
 }
 async function savePhotoToFolder(auftragOrEntry, blob){
-  if(!photoZipHandle || photoZipNeedsPermission) return false;
-  try{
-    const kundencode = sanitizeFilename(auftragOrEntry.kundencode || 'ohne-kundencode');
-    const zaehler = sanitizeFilename(auftragOrEntry.zaehler || 'ohne-zaehlernummer');
-    const datum = todayDe().split('.').join('-'); // TT-MM-JJJJ, dateisicher
-    const filename = `${kundencode}_${zaehler}_${datum}.jpg`;
-    return await savePhotoToFolderNamed(filename, blob);
-  }catch(e){ console.error('savePhotoToFolder', e); return false; }
+  if(!photoFolderHandle || photoFolderNeedsPermission) return false;
+  const kundencode = sanitizeFilename(auftragOrEntry.kundencode || 'ohne-kundencode');
+  const zaehler = sanitizeFilename(auftragOrEntry.zaehler || 'ohne-zaehlernummer');
+  const datum = todayDe().split('.').join('-'); // TT-MM-JJJJ, dateisicher
+  const filename = `${kundencode}_${zaehler}_${datum}.jpg`;
+  return await savePhotoToFolderNamed(filename, blob);
 }
-async function readPhotoFromZip(filename){
-  if(!photoZipHandle || photoZipNeedsPermission || !filename) return null;
+async function readPhotoFromFolder(filename){
+  if(!photoFolderHandle || photoFolderNeedsPermission || !filename) return null;
   try{
-    const zip = await loadPhotoZip();
-    const entry = zip.file(filename);
-    if(!entry) return null;
-    const blob = await entry.async('blob');
-    return URL.createObjectURL(blob);
-  }catch(e){ console.error('readPhotoFromZip', e); return null; }
+    const fileHandle = await photoFolderHandle.getFileHandle(filename);
+    const file = await fileHandle.getFile();
+    return URL.createObjectURL(file);
+  }catch(e){ return null; /* Datei fehlt/wurde umbenannt — kein harter Fehler */ }
 }
-async function removePhotoFromZip(filename){
-  if(!photoZipHandle || photoZipNeedsPermission || !filename) return;
-  try{
-    const zip = await loadPhotoZip();
-    zip.remove(filename);
-    await savePhotoZipHandle(zip);
-  }catch(e){ console.error('removePhotoFromZip', e); }
+async function removePhotoFromFolder(filename){
+  if(!photoFolderHandle || photoFolderNeedsPermission || !filename) return;
+  try{ await photoFolderHandle.removeEntry(filename); }catch(e){ /* schon weg, ignorieren */ }
 }
 
 async function tryRestoreFolder(){
@@ -2531,25 +2494,23 @@ function renderEinstellungen(){
     </div>
 
     <div class="settings-section">
-      <h4>Foto-Sicherungsdatei (PC, Chrome/Edge)</h4>
+      <h4>Fotoordner (PC, Chrome/Edge)</h4>
       <div class="settings-row">
-        ${photoZipHandle && !photoZipNeedsPermission
-          ? `<button class="btn" onclick="choosePhotoZipExisting()">📂 Andere bestehende Datei wählen</button>
-             <button class="btn" onclick="choosePhotoZipNew()">📄 Stattdessen neue Datei anlegen</button>`
-          : photoZipNeedsPermission
-            ? `<button class="btn primary" onclick="reconnectPhotoZip()">🔄 Datei wieder verbinden</button>`
-            : `<button class="btn primary" onclick="choosePhotoZipNew()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Neue Datei anlegen</button>
-               <button class="btn" onclick="choosePhotoZipExisting()" ${FS_SUPPORTED ? '' : 'disabled'}>📂 Bestehende Datei wählen</button>`
+        ${photoFolderHandle && !photoFolderNeedsPermission
+          ? `<button class="btn" onclick="choosePhotoFolder()">📁 Anderen Ordner wählen</button>`
+          : photoFolderNeedsPermission
+            ? `<button class="btn primary" onclick="reconnectPhotoFolder()">🔄 Ordner wieder verbinden</button>`
+            : `<button class="btn primary" onclick="choosePhotoFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📁 Fotoordner verknüpfen</button>`
         }
       </div>
       <p class="hint">
         ${!FS_SUPPORTED
           ? 'Auf diesem Gerät/Browser nicht verfügbar (nur Desktop Chrome/Edge).'
-          : photoZipHandle && !photoZipNeedsPermission
-            ? 'Verknüpft — neue Fotos werden automatisch als Eintrag (Name: Kundencode_Zählernummer_Datum.jpg) in dieser einen Datei gespeichert, nicht mehr im begrenzten App-Speicher. Jeder Besuch bekommt sein eigenes Foto, statt das vorherige zu überschreiben.'
-            : photoZipNeedsPermission
-              ? 'Datei war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
-              : 'Wähle (oder erstelle) eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, z.B. "auftragsmappe-fotos.zip" — genau wie bei der Sicherungsdatei. Die App speichert danach alle Fotos automatisch als Einträge darin. Ohne Verknüpfung landen Fotos weiterhin im begrenzten Browser-Speicher (nur für wenige Dutzend gedacht).'
+          : photoFolderHandle && !photoFolderNeedsPermission
+            ? 'Verknüpft — einmal ausgewählt, merkt sich die App das. Jedes neue Foto wird automatisch als eigene Bilddatei in diesem Ordner gespeichert (Name: Kundencode_Zählernummer_Datum.jpg), ganz normal im Explorer/OneDrive anschaubar. Jeder Besuch bekommt sein eigenes Foto, statt das vorherige zu überschreiben.'
+            : photoFolderNeedsPermission
+              ? 'Ordner war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
+              : 'Wähle einmal einen Ordner (z.B. deinen OneDrive-/SharePoint-synchronisierten "Bilder"-Ordner). Ab dann speichert die App jedes Foto automatisch als eigene Datei dort — ohne erneutes Nachfragen. Ohne Verknüpfung landen Fotos weiterhin im begrenzten Browser-Speicher (nur für ein einzelnes Foto gedacht).'
         }
       </p>
     </div>
@@ -4408,7 +4369,7 @@ function icsEscape(s){
 (async function init(){
   await loadAll();
   await tryRestoreFolder();
-  await tryRestorePhotoZip();
+  await tryRestorePhotoFolder();
   render();
   if(settings.remindersEnabled) startReminderChecks();
 })();
