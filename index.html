@@ -225,6 +225,12 @@
   }
   .ro-info-item{ display:flex; flex-direction:column; gap:2px; min-width:0; }
   .ro-info-label{ font-family:var(--font-mono); font-size:13px; letter-spacing:.02em; color:var(--ink-soft); }
+  .edit-section-head{
+    font-family:var(--font-display); font-weight:700; font-size:12.5px;
+    text-transform:uppercase; letter-spacing:.04em; color:var(--teal-deep);
+    margin:16px 0 8px; padding-bottom:4px; border-bottom:2px solid var(--line-soft);
+  }
+  .edit-section-head:first-of-type{ margin-top:4px; }
   .ro-info-val{ font-size:13.5px; color:var(--ink); word-break:break-word; }
   .custom-field-list{ display:flex; flex-direction:column; gap:4px; margin-bottom:4px; }
   .custom-field-row{
@@ -585,6 +591,13 @@ function fmtDateDe(isoDate){
   if(!isoDate) return '';
   const [y,m,d] = isoDate.split('-');
   return `${d}.${m}.${y}`;
+}
+function statusLabelWithTermin(a){
+  const label = STATUS[a.status].label;
+  if(a.status === 'termin_vereinbart' && a.termin){
+    return `${label} (${a.termin.date} ${a.termin.time})`;
+  }
+  return label;
 }
 function norm(s){ return (s||'').toString().trim().toLowerCase(); }
 function parseCoords(str){
@@ -1923,7 +1936,7 @@ function agendaItemHtml(entry){
         <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
         <div class="agenda-sub">${escapeHtml(a.vorgang)}${a.adresse ? ' · ' + escapeHtml(a.adresse) : ''}</div>
       </div>
-      <div class="pop-status" style="background:${color}22;color:${color};white-space:nowrap">${STATUS[a.status].label}</div>
+      <div class="pop-status" style="background:${color}22;color:${color};white-space:nowrap">${statusLabelWithTermin(a)}</div>
     </div>`;
 }
 
@@ -2481,7 +2494,7 @@ function initMapForTab(tabKey, list){
       <div class="pop-code">${escapeHtml(a.kundencode)}</div>
       ${a.kundenname ? `<div>${escapeHtml(a.kundenname)}</div>` : ''}
       <div>${escapeHtml(a.vorgang)}</div>
-      <div class="pop-status" style="background:${color}22;color:${color}">${byVorgang ? escapeHtml(a.vorgang) : STATUS[a.status].label}</div>
+      <div class="pop-status" style="background:${color}22;color:${color}">${byVorgang ? escapeHtml(a.vorgang) : statusLabelWithTermin(a)}</div>
       ${a.adresse ? `<div style="margin-top:6px">${escapeHtml(a.adresse)}</div>` : ''}
       ${a.standort ? `<div class="muted">${escapeHtml(a.standort)}</div>` : ''}
       ${a.telefonnummer ? `<div class="muted">${escapeHtml(a.telefonnummer)}</div>` : ''}
@@ -3607,9 +3620,10 @@ function openAuftragEditModal(id){
   const a = auftraege.find(x => x.id === id);
   if(!a) return;
 
-  const infoRow = (icon, label, value) => value
-    ? `<div class="ro-info-item"><span class="ro-info-label">${icon} ${label}</span><span class="ro-info-val">${escapeHtml(value)}</span></div>`
+  const infoRow = (icon, value) => value
+    ? `<div class="ro-info-item"><span class="ro-info-label">${icon}</span><span class="ro-info-val">${escapeHtml(value)}</span></div>`
     : '';
+  const sectionHead = (icon, title) => `<div class="edit-section-head">${icon} ${title}</div>`;
 
   showModal(`
     <div class="modal-head">
@@ -3618,13 +3632,21 @@ function openAuftragEditModal(id){
     </div>
     <div class="modal-body">
       <div id="photoArea" style="margin-bottom:14px">Lädt…</div>
+
+      ${sectionHead('📇','Stammdaten')}
       <div class="ro-info-grid">
-        ${infoRow('👤', '', a.kundenname)}
-        ${infoRow('📍', '', a.adresse)}
-        ${infoRow('🏷️', '', a.standort)}
-        ${infoRow('🔢', '', a.zaehler)}
-        ${infoRow('🔧', '', a.bauform)}
-        ${infoRow('✉️', '', a.email)}
+        ${infoRow('👤', a.kundenname)}
+        ${infoRow('📍', a.adresse)}
+        ${infoRow('🏷️', a.standort)}
+        ${infoRow('🔧', a.bauform)}
+        ${infoRow('✉️', a.email)}
+      </div>
+      <div class="ro-info-item" style="margin-bottom:12px">
+        <span class="ro-info-label">🔢</span>
+        <span class="ro-info-val" style="display:flex;align-items:center;gap:8px">
+          ${escapeHtml(a.zaehler) || '<span class="muted">–</span>'}
+          <button class="icon-btn" onclick="openZaehlerWechselModal('${a.id}')" title="Zähler wechseln">🔄</button>
+        </span>
       </div>
       <div class="field-row">
         <div class="field">
@@ -3648,10 +3670,11 @@ function openAuftragEditModal(id){
       </div>
       ${a.auftragsbeschreibung ? `<div class="field"><label>Auftragsbeschreibung</label><p class="ro-value" style="white-space:pre-line">${escapeHtml(a.auftragsbeschreibung)}</p></div>` : ''}
 
+      ${sectionHead('🔘','Status & Ablauf')}
       <div class="field-row">
         <div class="field">
           <label>Status</label>
-          <select id="edit_status">
+          <select id="edit_status" onchange="onEditStatusChange('${a.id}', this.value)">
             ${Object.entries(STATUS).map(([k,v]) => `<option value="${k}" ${k===a.status?'selected':''}>${v.label}</option>`).join('')}
           </select>
         </div>
@@ -3660,34 +3683,39 @@ function openAuftragEditModal(id){
           <input type="date" id="edit_inbetriebnahmeDatum" value="${escapeHtml(a.inbetriebnahmeDatum||'')}">
         </div>
       </div>
+
+      ${sectionHead('📅','Termin')}
+      <div class="settings-row" style="margin-bottom:6px">
+        ${a.termin ? `<span class="termin-chip">${a.termin.date} · ${a.termin.time}</span>` : `<span class="muted" style="font-size:12.5px">Noch kein Termin</span>`}
+        <button class="btn small" onclick="openTerminModal('${a.id}')">📅 ${a.termin ? 'Termin ändern' : 'Termin festlegen'}</button>
+        <button class="btn small" onclick="navigateToAuftrag('${a.id}')">🧭 Navigation</button>
+      </div>
+
+      ${sectionHead('📞','Wiedervorlage (Rückruf)')}
+      <div class="settings-row" style="margin-bottom:6px">
+        <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 2)">+2 Tage</button>
+        <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 7)">+1 Woche</button>
+        <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 14)">+2 Wochen</button>
+      </div>
+      <div class="field-row" style="align-items:center">
+        <input type="date" id="edit_wiedervorlage_datum" value="${escapeHtml(a.wiedervorlage ? a.wiedervorlage.datum : '')}" style="flex:2">
+        <input type="time" id="edit_wiedervorlage_zeit" value="${escapeHtml(a.wiedervorlage ? (a.wiedervorlage.zeit||'09:00') : '09:00')}" style="flex:1">
+        <button class="icon-btn" onclick="saveWiedervorlageFromModal('${a.id}')" title="Speichern">✓</button>
+        ${a.wiedervorlage ? `<button class="icon-btn" onclick="clearWiedervorlage('${a.id}')" title="Entfernen">🗑</button>` : ''}
+      </div>
+
+      ${sectionHead('📝','Notiz')}
       <div class="field">
         <label style="display:flex;align-items:center;justify-content:space-between">
-          Notiz
+          <span class="muted" style="font-size:12px">Notiz</span>
           <button type="button" class="icon-btn" id="dictate_edit_kommentar" onclick="startDictation('edit_kommentar')" title="Diktieren">🎙️</button>
         </label>
         <textarea id="edit_kommentar" rows="3">${escapeHtml(a.kommentar||'')}</textarea>
         ${fieldUpdateHint(a, 'kommentar')}
       </div>
-      <div class="field">
-        <label>📞 Wiedervorlage</label>
-        <div class="settings-row" style="margin-bottom:6px">
-          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 2)">+2 Tage</button>
-          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 7)">+1 Woche</button>
-          <button class="btn small" onclick="setWiedervorlageQuick('${a.id}', 14)">+2 Wochen</button>
-        </div>
-        <div class="field-row" style="align-items:center">
-          <input type="date" id="edit_wiedervorlage_datum" value="${escapeHtml(a.wiedervorlage ? a.wiedervorlage.datum : '')}" style="flex:2">
-          <input type="time" id="edit_wiedervorlage_zeit" value="${escapeHtml(a.wiedervorlage ? (a.wiedervorlage.zeit||'09:00') : '09:00')}" style="flex:1">
-          <button class="icon-btn" onclick="saveWiedervorlageFromModal('${a.id}')" title="Speichern">✓</button>
-          ${a.wiedervorlage ? `<button class="icon-btn" onclick="clearWiedervorlage('${a.id}')" title="Entfernen">🗑</button>` : ''}
-        </div>
-      </div>
       ${renderCustomFieldInputs(a)}
-      ${a.termin ? `<p class="hint">📅 <span class="termin-chip">${a.termin.date} · ${a.termin.time}</span></p>` : ''}
-      <div class="settings-row" style="margin-top:6px">
-        <button class="btn small" onclick="navigateToAuftrag('${a.id}')">🧭 Navigation</button>
-        <button class="btn small" onclick="openTerminModal('${a.id}')">📅 Termin</button>
-        <button class="btn small" onclick="openZaehlerWechselModal('${a.id}')">🔄 Zähler wechseln</button>
+
+      <div class="settings-row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line-soft)">
         <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
         <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Adressbuch</button>
       </div>
@@ -3698,6 +3726,15 @@ function openAuftragEditModal(id){
     </div>
   `);
   refreshPhotoArea(id);
+}
+
+function onEditStatusChange(id, newStatus){
+  const a = auftraege.find(x => x.id === id);
+  if(!a) return;
+  setStatus(id, newStatus);
+  if(newStatus === 'termin_vereinbart' && !a.termin){
+    openTerminModal(id);
+  }
 }
 
 /* ---------------------------------------------------------------
