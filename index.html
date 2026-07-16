@@ -376,7 +376,7 @@
   .agenda-date-header.is-today{ color:var(--teal); background:var(--green-bg); }
   .agenda-date-header.is-past{ color:var(--ink-soft); }
   .agenda-item{
-    display:flex; align-items:center; gap:14px; padding:12px 14px;
+    display:flex; align-items:flex-start; gap:14px; padding:12px 14px;
     border-bottom:1px solid var(--line-soft); cursor:pointer;
   }
   .agenda-item:hover{ background:#fafcfb; }
@@ -388,6 +388,10 @@
   .agenda-main{ flex:1; min-width:0; }
   .agenda-title{ font-size:13.5px; font-weight:600; }
   .agenda-sub{ font-size:12.5px; color:var(--ink-soft); margin-top:2px; }
+  .agenda-main .pop-status{
+    display:inline-block; margin-top:6px; padding:2px 8px; border-radius:10px;
+    font-weight:600; font-size:11px; white-space:normal; line-height:1.4;
+  }
   .stat-summary{ display:flex; flex-wrap:wrap; gap:12px; }
   .stat-tile{
     flex:1 1 110px; background:#f6f8f7; border-radius:8px; padding:14px 12px; text-align:center;
@@ -1179,14 +1183,25 @@ function scheduleFolderSync(){
    Address book helpers
 --------------------------------------------------------------- */
 function findAdrEntry(zaehlerplatzId, kundencode, adresse, zaehler){
-  // Kundencode is the primary key when present.
-  if(kundencode){
-    const hit = adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
+  // Compound match (most precise): Messlokation + Zähler together identify one
+  // exact metering point. This is now the PRIMARY key — Messlokation alone
+  // was merging distinct locations that happen to share a customer/contract
+  // number, which then cascaded wrong coordinates across unrelated Aufträge.
+  if(kundencode && zaehler){
+    const hit = adressbuch.find(a => a.kundencode && a.zaehler
+      && norm(a.kundencode) === norm(kundencode) && norm(a.zaehler) === norm(zaehler));
+    if(hit) return hit;
+  }
+  // Messlokation alone only as a fallback for Neuanlagen (no Zähler yet) — and
+  // only matches an entry that ALSO has no Zähler yet, so it never merges
+  // into an entry that already belongs to a different, specific meter.
+  if(kundencode && !zaehler){
+    const hit = adressbuch.find(a => a.kundencode && !a.zaehler && norm(a.kundencode) === norm(kundencode));
     if(hit) return hit;
   }
   // Fallback: match on Zähler(-nummer) alone. This is what lets a manually
-  // created entry (just Zähler + Standort, no Kundencode yet) get "found"
-  // and enriched once an import row with the same Zähler brings a Kundencode.
+  // created entry (just Zähler + Standort, no Messlokation yet) get "found"
+  // and enriched once an import row with the same Zähler brings a Messlokation.
   if(zaehler){
     const hit = adressbuch.find(a => a.zaehler && norm(a.zaehler) === norm(zaehler));
     if(hit) return hit;
@@ -1237,9 +1252,9 @@ function upsertAdrFromImport(row){
     mergeField('zaehler');
     mergeField('bauform');
     mergeField('standort');
-    // Kundencode/Zählerplatz-ID only ever get filled in when missing (e.g. a
+    // Messlokation/Zählerplatz-ID only ever get filled in when missing (e.g. a
     // manually created entry with just Zähler+Standort gets "enriched" once
-    // an import row with the same Zähler brings the Kundencode along) —
+    // an import row with the same Zähler brings the Messlokation along) —
     // never combined, since that's meant to be a single stable identifier.
     if(!entry.kundencode && row.kundencode){
       entry.kundencode = row.kundencode;
@@ -1529,7 +1544,7 @@ function mappingMatchesHeaders(headers){
 function openMappingModal(manual){
   const headers = pendingCsvHeaders || (columnMapping ? Object.values(columnMapping).filter(v => typeof v === 'string' && v) : []);
   const basicFields = [
-    { key:'kundencode', label:'Kundencode', required:true },
+    { key:'kundencode', label:'Messlokation', required:true },
     { key:'vorgang', label:'Vorgang', required:true },
     { key:'auftragsbeschreibung', label:'Auftragsbeschreibung', required:false },
     { key:'telefonnummer', label:'Telefonnummer', required:false },
@@ -1612,7 +1627,7 @@ function confirmMapping(manual){
     mapping[f] = el ? el.value : '';
   }
   if(!mapping.kundencode || (!mapping.vorgang && !importAdrOnlyMode)){
-    showToast(importAdrOnlyMode ? 'Kundencode muss zugeordnet werden' : 'Kundencode und Vorgang müssen zugeordnet werden');
+    showToast(importAdrOnlyMode ? 'Messlokation muss zugeordnet werden' : 'Messlokation und Vorgang müssen zugeordnet werden');
     return;
   }
   columnMapping = mapping;
@@ -1709,7 +1724,7 @@ function runImport(){
 
     // Only skip a row if there's truly nothing at all to record — every row
     // with any usable field still gets an address book entry, even without
-    // a Kundencode or Zählerplatz-ID.
+    // a Messlokation or Zählerplatz-ID.
     const hasAnyData = kundencode.trim() || zaehlerplatzId.trim() || adresse.trim()
       || telefonnummer.trim() || kundenname.trim() || standort.trim() || zaehler.trim();
     if(!hasAnyData){ skippedEmpty++; continue; }
@@ -1722,7 +1737,7 @@ function runImport(){
 
     if(importAdrOnlyMode || !vorgang.trim() || !kundencode.trim()){
       adrOnly++;
-      continue; // Adressbuch-only mode, or no Auftragstyp/Kundencode → address book updated, but no Auftrag created
+      continue; // Adressbuch-only mode, or no Auftragstyp/Messlokation → address book updated, but no Auftrag created
     }
 
     const key = norm(kundencode) + '|' + norm(vorgang);
@@ -1810,7 +1825,7 @@ function adressbuchExportRows(){
       'Zähler': e.zaehler || '',
       'Bauform Zähler': e.bauform || '',
       'Zählerplatz-ID': e.zaehlerplatzId || '',
-      'Kundencode': e.kundencode || '',
+      'Messlokation': e.kundencode || '',
       'Breitengrad': e.koordinaten ? e.koordinaten.lat : '',
       'Längengrad': e.koordinaten ? e.koordinaten.lon : '',
     }));
@@ -1822,7 +1837,7 @@ function exportAdressbuchExcel(){
   const ws = XLSX.utils.json_to_sheet(rows);
   // Force ID-like columns to text format so Excel never turns them into numbers
   // (that's exactly the ".0" / lost-leading-zero bug we hit before).
-  const textCols = ['Telefonnummer','Zähler','Zählerplatz-ID','Kundencode'];
+  const textCols = ['Telefonnummer','Zähler','Zählerplatz-ID','Messlokation'];
   const headerRow = Object.keys(rows[0] || {});
   textCols.forEach(colName => {
     const colIdx = headerRow.indexOf(colName);
@@ -2015,7 +2030,7 @@ function openColumnPicker(){
   showModal(`
     <div class="modal-head"><h3>Sichtbare Spalten &amp; Reihenfolge</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <p class="hint" style="margin-top:0">Kundencode ist immer sichtbar und steht immer vorn. Mit ▲▼ änderst du die Reihenfolge der übrigen Spalten, mit dem Häkchen die Sichtbarkeit.</p>
+      <p class="hint" style="margin-top:0">Messlokation ist immer sichtbar und steht immer vorn. Mit ▲▼ änderst du die Reihenfolge der übrigen Spalten, mit dem Häkchen die Sichtbarkeit.</p>
       <div class="col-picker" id="colPickerBody">${renderColumnPickerRows()}</div>
     </div>
     <div class="modal-foot">
@@ -2283,8 +2298,8 @@ function agendaItemHtml(entry){
         <div class="agenda-main">
           <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
           <div class="agenda-sub">Rückruf${a.telefonnummer ? ' · ' + escapeHtml(a.telefonnummer) : ''}</div>
+          <div class="pop-status" style="background:var(--purple-bg);color:var(--purple)">Rückruf</div>
         </div>
-        <div class="pop-status" style="background:var(--purple-bg);color:var(--purple);white-space:nowrap">Rückruf</div>
       </div>`;
   }
   const color = STATUS_COLOR_MAP[a.status] || '#55635f';
@@ -2294,8 +2309,8 @@ function agendaItemHtml(entry){
       <div class="agenda-main">
         <div class="agenda-title"><span class="code">${escapeHtml(a.kundencode)}</span> ${escapeHtml(a.kundenname||'')}</div>
         <div class="agenda-sub">${escapeHtml(a.vorgang)}${a.adresse ? ' · ' + escapeHtml(a.adresse) : ''}</div>
+        <div class="pop-status" style="background:${color}22;color:${color}">${statusLabelWithTermin(a)}</div>
       </div>
-      <div class="pop-status" style="background:${color}22;color:${color};white-space:nowrap">${statusLabelWithTermin(a)}</div>
     </div>`;
 }
 
@@ -2546,7 +2561,7 @@ function renderEinstellungen(){
         ${!FS_SUPPORTED
           ? 'Auf diesem Gerät/Browser nicht verfügbar (nur Desktop Chrome/Edge).'
           : photoFolderHandle && !photoFolderNeedsPermission
-            ? 'Verknüpft — einmal ausgewählt, merkt sich die App das. Jedes neue Foto wird automatisch als eigene Bilddatei in diesem Ordner gespeichert (Name: Kundencode_Zählernummer_Datum.jpg), ganz normal im Explorer/OneDrive anschaubar. Jeder Besuch bekommt sein eigenes Foto, statt das vorherige zu überschreiben.'
+            ? 'Verknüpft — einmal ausgewählt, merkt sich die App das. Jedes neue Foto wird automatisch als eigene Bilddatei in diesem Ordner gespeichert (Name: Messlokation_Zählernummer_Datum.jpg), ganz normal im Explorer/OneDrive anschaubar. Jeder Besuch bekommt sein eigenes Foto, statt das vorherige zu überschreiben.'
             : photoFolderNeedsPermission
               ? 'Ordner war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
               : 'Wähle einmal einen Ordner (z.B. deinen OneDrive-/SharePoint-synchronisierten "Bilder"-Ordner). Ab dann speichert die App jedes Foto automatisch als eigene Datei dort — ohne erneutes Nachfragen. Ohne Verknüpfung landen Fotos weiterhin im begrenzten Browser-Speicher (nur für ein einzelnes Foto gedacht).'
@@ -2665,7 +2680,7 @@ function renderFilterBar(tabKey, fullList){
   const anyActive = !!(f.search || statusActive || vorgangActive);
   return `
     <div class="filter-bar">
-      <input type="text" id="filtersearch-${tabKey}" class="filter-search" placeholder="Suchen (Name, Adresse, Kundencode, Kommentar…)"
+      <input type="text" id="filtersearch-${tabKey}" class="filter-search" placeholder="Suchen (Name, Adresse, Messlokation, Kommentar…)"
         value="${escapeHtml(f.search)}" oninput="setFilter('${tabKey}','search', this.value)">
       <button class="btn small ${statusActive?'primary':''}" onclick="openMultiFilterModal('${tabKey}','status')">
         Status${statusActive ? ' (' + f.statuses.length + ')' : ''} ▾
@@ -2966,7 +2981,23 @@ function openScannerModalUi(title, hint){
 
 function startScanner(){
   try{
-    zxingReader = new ZXing.BrowserMultiFormatReader();
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      ZXing.BarcodeFormat.CODE_128,
+      ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.CODE_93,
+      ZXing.BarcodeFormat.EAN_13,
+      ZXing.BarcodeFormat.EAN_8,
+      ZXing.BarcodeFormat.UPC_A,
+      ZXing.BarcodeFormat.UPC_E,
+      ZXing.BarcodeFormat.ITF,
+      ZXing.BarcodeFormat.QR_CODE,
+      ZXing.BarcodeFormat.DATA_MATRIX,
+      ZXing.BarcodeFormat.PDF_417,
+      ZXing.BarcodeFormat.AZTEC
+    ]);
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    zxingReader = new ZXing.BrowserMultiFormatReader(hints);
     zxingReader.decodeFromConstraints(
       { video: { facingMode: 'environment' } },
       'qr-video',
@@ -3571,7 +3602,7 @@ function renderAuftragTable(list, isErledigtTab){
   const rows = sortedList.map(a => `
     <tr>
       <td data-label="Auswahl"><input type="checkbox" ${sel.has(a.id)?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"></td>
-      <td data-label="Kundencode"><span class="code-sm">${escapeHtml(a.kundencode)}</span>${(distanceSortActive[tabKey] && userLocationCache && a.koordinaten) ? ` <span class="muted" style="font-size:11px">(${haversineKm(userLocationCache.lat, userLocationCache.lon, a.koordinaten.lat, a.koordinaten.lon).toFixed(1)} km)</span>` : ''}</td>
+      <td data-label="Messlokation"><span class="code-sm">${escapeHtml(a.kundencode)}</span>${(distanceSortActive[tabKey] && userLocationCache && a.koordinaten) ? ` <span class="muted" style="font-size:11px">(${haversineKm(userLocationCache.lat, userLocationCache.lon, a.koordinaten.lat, a.koordinaten.lon).toFixed(1)} km)</span>` : ''}</td>
       ${cols.map(key => getCellRenderer(key)(a)).join('')}
       <td data-label="Aktionen">
         <div class="row-actions">
@@ -3584,7 +3615,7 @@ function renderAuftragTable(list, isErledigtTab){
     </tr>
   `).join('');
 
-  const headCells = [`<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll('${tabKey}', this.checked)"></th>`, '<th>Kundencode</th>']
+  const headCells = [`<th><input type="checkbox" ${allChecked?'checked':''} onchange="toggleSelectAll('${tabKey}', this.checked)"></th>`, '<th>Messlokation</th>']
     .concat(cols.map(key => `<th>${getColumnLabel(key)}</th>`))
     .concat(['<th></th>'])
     .join('');
@@ -3628,7 +3659,7 @@ function openNewAdrEntryModal(prefill){
         <div class="field"><label>E-Mail</label><input type="text" id="new_adr_email" value="${pv('email')}"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>Kundencode</label><input type="text" id="new_adr_kundencode" value="${pv('kundencode')}"></div>
+        <div class="field"><label>Messlokation</label><input type="text" id="new_adr_kundencode" value="${pv('kundencode')}"></div>
         <div class="field"><label>Zählerplatz-ID</label><input type="text" id="new_adr_zaehlerplatzid" value="${pv('zaehlerplatzid')}"></div>
       </div>
       <div class="field"><label>Bauform Zähler</label><input type="text" id="new_adr_bauform" value="${pv('bauform')}"></div>
@@ -3905,7 +3936,7 @@ function renderAdressbuch(){
             <textarea class="cell-input" id="adr_notiz_${e.id}" rows="2" onchange="updateAdrField('${e.id}','notiz', this.value)">${escapeHtml(e.notiz||'')}</textarea>
             ${fieldUpdateHint(e,'notiz')}
           </div>
-          <p class="hint">Kundencode: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
+          <p class="hint">Messlokation: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
         </div>` : ''}
     </div>`;
   }).join('');
