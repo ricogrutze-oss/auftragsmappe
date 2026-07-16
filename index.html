@@ -2979,44 +2979,67 @@ function openScannerModalUi(title, hint){
   startScanner();
 }
 
-function startScanner(){
+let scanStream = null;
+let scanLoopActive = false;
+
+async function startScanner(){
+  const video = document.getElementById('qr-video');
   try{
-    const hints = new Map();
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
-      ZXing.BarcodeFormat.CODE_93,
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.EAN_8,
-      ZXing.BarcodeFormat.UPC_A,
-      ZXing.BarcodeFormat.UPC_E,
-      ZXing.BarcodeFormat.ITF,
-      ZXing.BarcodeFormat.QR_CODE,
-      ZXing.BarcodeFormat.DATA_MATRIX,
-      ZXing.BarcodeFormat.PDF_417,
-      ZXing.BarcodeFormat.AZTEC
-    ]);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    zxingReader = new ZXing.BrowserMultiFormatReader(hints);
-    zxingReader.decodeFromConstraints(
-      { video: { facingMode: 'environment' } },
-      'qr-video',
-      (result, err) => {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    scanStream = stream;
+    video.srcObject = stream;
+    await video.play();
+
+    if('BarcodeDetector' in window){
+      // Native, OS-level detection — no internet, no library, fast.
+      let formats;
+      try{ formats = await BarcodeDetector.getSupportedFormats(); }
+      catch(e){ formats = ['qr_code','code_128','code_39','code_93','ean_13','ean_8','upc_a','upc_e','itf','data_matrix','pdf417']; }
+      const detector = new BarcodeDetector({ formats });
+      scanLoopActive = true;
+      const scanFrame = async () => {
+        if(!scanLoopActive) return;
+        try{
+          const codes = await detector.detect(video);
+          if(codes && codes.length > 0){
+            onScanSuccess(codes[0].rawValue);
+            return;
+          }
+        }catch(e){ /* transient per-frame detection error, ignore */ }
+        if(scanLoopActive) requestAnimationFrame(scanFrame);
+      };
+      scanFrame();
+    } else if(typeof ZXing !== 'undefined'){
+      // Fallback for browsers without native BarcodeDetector (e.g. Safari/iPhone)
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39, ZXing.BarcodeFormat.CODE_93,
+        ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A,
+        ZXing.BarcodeFormat.UPC_E, ZXing.BarcodeFormat.ITF, ZXing.BarcodeFormat.QR_CODE,
+        ZXing.BarcodeFormat.DATA_MATRIX, ZXing.BarcodeFormat.PDF_417, ZXing.BarcodeFormat.AZTEC
+      ]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      zxingReader = new ZXing.BrowserMultiFormatReader(hints);
+      zxingReader.decodeFromVideoElement(video, (result) => {
         if(result){ onScanSuccess(result.getText()); }
-        // NotFoundException fires every frame without a code — that's normal, ignore it
-      }
-    ).catch(() => {
-      showToast('Kamera konnte nicht gestartet werden — Berechtigung erteilt?');
-    });
+      });
+    } else {
+      showToast('Kein Scanner auf diesem Gerät verfügbar');
+    }
   }catch(e){
-    showToast('Scanner konnte nicht gestartet werden');
+    showToast('Kamera konnte nicht gestartet werden — Berechtigung erteilt?');
   }
 }
 
 function stopScanner(){
+  scanLoopActive = false;
   if(zxingReader){
     try{ zxingReader.reset(); }catch(e){}
     zxingReader = null;
+  }
+  if(scanStream){
+    scanStream.getTracks().forEach(t => t.stop());
+    scanStream = null;
   }
 }
 
