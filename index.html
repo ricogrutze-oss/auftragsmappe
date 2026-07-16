@@ -695,7 +695,7 @@ function dataUrlToBlob(dataUrl){
   for(let i=0;i<bin.length;i++){ arr[i] = bin.charCodeAt(i); }
   return new Blob([arr], { type: mime });
 }
-function buildPhotoOverlayLines(a){
+function buildPhotoOverlayLines(a, coords, accuracy){
   if(!a) return [];
   const lines = [];
   const nameLine = [a.kundencode, a.kundenname].filter(Boolean).join(' · ');
@@ -706,12 +706,13 @@ function buildPhotoOverlayLines(a){
   if(zaehlerLine) lines.push(zaehlerLine);
   const now = new Date();
   const datumZeit = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const coordStr = a.koordinaten ? fmtCoords(a.koordinaten) : '';
-  lines.push([datumZeit, coordStr].filter(Boolean).join(' · '));
+  const coordStr = coords ? fmtCoords(coords) : '';
+  const accStr = accuracy ? `±${accuracy}m` : '';
+  lines.push([datumZeit, coordStr, accStr].filter(Boolean).join(' · '));
   return lines;
 }
 
-function compressImageFile(file, auftrag){
+function compressImageFile(file, auftrag, coords, accuracy){
   return new Promise((resolve, reject) => {
     const img = new Image();
     const reader = new FileReader();
@@ -723,7 +724,7 @@ function compressImageFile(file, auftrag){
       const w = Math.round(img.width * scale);
       const photoH = Math.round(img.height * scale);
 
-      const lines = buildPhotoOverlayLines(auftrag);
+      const lines = buildPhotoOverlayLines(auftrag, coords, accuracy);
       const fontSize = Math.max(13, Math.round(w * 0.028));
       const linePad = Math.round(fontSize * 0.35);
       const stripePad = Math.round(fontSize * 0.6);
@@ -749,7 +750,7 @@ function compressImageFile(file, auftrag){
       }
 
       let dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-      dataUrl = embedGpsExif(dataUrl, auftrag ? auftrag.koordinaten : null);
+      dataUrl = embedGpsExif(dataUrl, coords);
       const blob = dataUrlToBlob(dataUrl);
       resolve({ blob, dataUrl });
     };
@@ -782,11 +783,22 @@ async function sharePhotoBlob(blob, filename){
 
 function nextPhotoFilename(a, kundencode, zaehler, datum){
   const base = `${kundencode}_${zaehler}_${datum}`;
-  const existing = (a.photoFilenames || []).map(f => f.replace(/\.jpg$/,''));
+  const existing = (a.photos || []).map(p => p.filename.replace(/\.jpg$/,''));
   if(!existing.includes(base)) return base + '.jpg';
   let n = 2;
   while(existing.includes(`${base}_${n}`)) n++;
   return `${base}_${n}.jpg`;
+}
+
+function getFreshGpsForPhoto(){
+  return new Promise((resolve) => {
+    if(!navigator.geolocation){ resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
+    );
+  });
 }
 
 document.getElementById('photoInput').addEventListener('change', async function(e){
@@ -794,37 +806,43 @@ document.getElementById('photoInput').addEventListener('change', async function(
   e.target.value = '';
   if(!file || !photoTargetAuftragId) return;
   try{
-    const a = auftraege.find(x => x.id === photoTargetAuftragId);
-    const { blob, dataUrl } = await compressImageFile(file, a);
+    const auftragId = photoTargetAuftragId;
+    const a = auftraege.find(x => x.id === auftragId);
+    showToast('Foto wird verarbeitet, Standort wird ermittelt…');
+    const fresh = await getFreshGpsForPhoto();
+    const coords = fresh ? { lat: fresh.lat, lon: fresh.lon } : (a ? a.koordinaten : null);
+    const accuracy = fresh ? fresh.accuracy : null;
+
+    const { blob, dataUrl } = await compressImageFile(file, a, coords, accuracy);
     const folderReady = photoFolderHandle && !photoFolderNeedsPermission;
 
     if(folderReady && a){
-      if(!a.photoFilenames) a.photoFilenames = [];
+      if(!a.photos) a.photos = [];
       const kundencode = sanitizeFilename(a.kundencode || 'ohne-kundencode');
       const zaehler = sanitizeFilename(a.zaehler || 'ohne-zaehlernummer');
       const datum = todayDe().split('.').join('-');
       const filename = nextPhotoFilename(a, kundencode, zaehler, datum);
       const saved = await savePhotoToFolderNamed(filename, blob);
       if(saved){
-        a.photoFilenames.push(filename);
+        a.photos.push({ filename, koordinaten: coords, genauigkeit: accuracy });
         saveAuftraege();
-        showToast('Foto gespeichert: ' + filename);
+        showToast('Foto gespeichert: ' + filename + (accuracy ? ` (±${accuracy}m)` : ''));
       } else {
         showToast('Foto-Speicherung fehlgeschlagen, speichere im App-Speicher');
-        await kvSet('photo_' + photoTargetAuftragId, dataUrl);
+        await kvSet('photo_' + auftragId, dataUrl);
       }
     } else {
-      // No zip linked (typically mobile) — local storage only realistically
+      // No folder linked (typically mobile) — local storage only realistically
       // fits a single photo. Offer to share it out (e.g. to OneDrive) right away,
       // using the same filename scheme as the desktop file storage.
-      await kvSet('photo_' + photoTargetAuftragId, dataUrl);
-      const kundencode = sanitizeFilename(a ? a.kundencode : '' || 'ohne-kundencode');
-      const zaehler = sanitizeFilename(a ? a.zaehler : '' || 'ohne-zaehlernummer');
+      await kvSet('photo_' + auftragId, dataUrl);
+      const kundencode = sanitizeFilename((a && a.kundencode) || 'ohne-kundencode');
+      const zaehler = sanitizeFilename((a && a.zaehler) || 'ohne-zaehlernummer');
       const datum = todayDe().split('.').join('-');
       const shareFilename = `${kundencode}_${zaehler}_${datum}.jpg`;
       await sharePhotoBlob(blob, shareFilename);
     }
-    refreshPhotoArea(photoTargetAuftragId);
+    refreshPhotoArea(auftragId);
   }catch(err){
     showToast('Foto konnte nicht verarbeitet werden');
   }
@@ -833,17 +851,15 @@ document.getElementById('photoInput').addEventListener('change', async function(
 async function getPhotoSrcList(auftragId){
   const a = auftraege.find(x => x.id === auftragId);
   const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
-  if(a && a.photoFilenames && a.photoFilenames.length && folderReady2){
-    const results = await Promise.all(a.photoFilenames.map(async (fn) => ({ filename: fn, src: await readPhotoFromFolder(fn) })));
+  if(a && a.photos && a.photos.length && folderReady2){
+    const results = await Promise.all(a.photos.map(async (p) => ({
+      filename: p.filename, koordinaten: p.koordinaten, genauigkeit: p.genauigkeit,
+      src: await readPhotoFromFolder(p.filename)
+    })));
     return results.filter(r => r.src);
   }
-  // legacy single-photo fallback (App-Speicher oder alte photoFilename-Fotos)
-  if(a && a.photoFilename && folderReady2){
-    const src = await readPhotoFromFolder(a.photoFilename);
-    if(src) return [{ filename: a.photoFilename, src }];
-  }
   const dataUrl = await kvGet('photo_' + auftragId);
-  if(dataUrl) return [{ filename: null, src: dataUrl }];
+  if(dataUrl) return [{ filename: null, koordinaten: a ? a.koordinaten : null, genauigkeit: null, src: dataUrl }];
   return [];
 }
 
@@ -855,20 +871,19 @@ async function refreshPhotoArea(auftragId){
 }
 
 function photoAreaHtml(auftragId, photos){
-  const a = auftraege.find(x => x.id === auftragId);
-  const hasCoords = a && a.koordinaten;
   const thumbs = photos.map((p, idx) => `
     <div style="position:relative;flex:0 0 auto">
       <img src="${p.src}" style="width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;display:block" onclick="openPhotoFull('${auftragId}', ${idx})">
+      ${p.koordinaten ? `<button class="icon-btn" onclick="navigateToCoords(${p.koordinaten.lat},${p.koordinaten.lon})" title="Zu diesem Foto-Standort navigieren" style="position:absolute;bottom:4px;left:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗺️</button>` : ''}
       <button class="icon-btn" onclick="deletePhoto('${auftragId}', ${p.filename ? `'${p.filename}'` : 'null'})" title="Löschen" style="position:absolute;top:4px;right:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗑</button>
+      ${p.genauigkeit ? `<span style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,.55);color:#fff;font-size:10px;padding:1px 5px;border-radius:6px">±${p.genauigkeit}m</span>` : ''}
     </div>`).join('');
   return `
     <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px">${thumbs}</div>
     <div class="settings-row">
       <button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 ${photos.length ? 'Foto hinzufügen' : 'Foto aufnehmen'}</button>
-      ${hasCoords ? `<button class="btn small" onclick="navigateToAuftrag('${auftragId}')">🗺️ Zum Standort</button>` : ''}
     </div>
-    ${hasCoords && photos.length ? `<p class="hint" style="margin:6px 0 0">📍 GPS-Standort ist in neuen Fotos gespeichert (EXIF)</p>` : ''}`;
+    ${photos.length ? `<p class="hint" style="margin:6px 0 0">📍 Standort wird bei jedem Foto frisch gemessen und mit gespeichert (EXIF + 🗺️-Button je Foto)</p>` : ''}`;
 }
 
 async function openPhotoFull(auftragId, idx){
@@ -877,13 +892,16 @@ async function openPhotoFull(auftragId, idx){
   if(p && p.src){ window.open(p.src, '_blank'); }
 }
 
+function navigateToCoords(lat, lon){
+  window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`, '_blank');
+}
+
 async function deletePhoto(auftragId, filename){
   const a = auftraege.find(x => x.id === auftragId);
   const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
   if(a && filename && folderReady2){
     await removePhotoFromFolder(filename);
-    if(a.photoFilenames) a.photoFilenames = a.photoFilenames.filter(f => f !== filename);
-    if(a.photoFilename === filename) a.photoFilename = ''; // legacy field cleanup
+    if(a.photos) a.photos = a.photos.filter(p => p.filename !== filename);
     saveAuftraege();
   }
   if(!filename){
@@ -905,6 +923,17 @@ async function loadAll(){
     }
   });
   if(migratedWiedervorlage) saveAuftraege();
+  // migrate old photoFilenames (plain strings) into the new photos array
+  // (with per-photo coordinates) — best-effort fallback to the Auftrag's own
+  // stored coordinates since older photos didn't capture their own.
+  let migratedPhotos = false;
+  auftraege.forEach(a => {
+    if(a.photoFilenames && a.photoFilenames.length && !a.photos){
+      a.photos = a.photoFilenames.map(fn => ({ filename: fn, koordinaten: a.koordinaten || null, genauigkeit: null }));
+      migratedPhotos = true;
+    }
+  });
+  if(migratedPhotos) saveAuftraege();
   try{ const v = await kvGet('adressbuch'); adressbuch = v ? JSON.parse(v) : []; }catch(e){ adressbuch = []; }
   try{ const v = await kvGet('settings'); settings = v ? JSON.parse(v) : { organizerEmail:'', lastImport:null }; }
   catch(e){ settings = { organizerEmail:'', lastImport:null }; }
@@ -1278,9 +1307,10 @@ function updateAuftragCoords(id, value){
 let pendingGpsAccept = null;
 let pendingGpsRetry = null;
 
-function captureGps(onSuccess){
+function captureGps(onSuccess, onFailure){
   if(!navigator.geolocation){
     showToast('Standortzugriff wird von diesem Gerät/Browser nicht unterstützt');
+    if(onFailure) onFailure();
     return;
   }
   const threshold = settings.gpsAccuracyThreshold || 10;
@@ -1306,9 +1336,10 @@ function captureGps(onSuccess){
     settled = true;
     cleanup();
     if(best){
-      offerLowAccuracyGps(best, threshold, onSuccess);
+      offerLowAccuracyGps(best, threshold, onSuccess, onFailure);
     } else {
       showToast('Standort konnte nicht ermittelt werden — Berechtigung erteilt?');
+      if(onFailure) onFailure();
     }
   };
 
@@ -1325,27 +1356,35 @@ function captureGps(onSuccess){
   timeoutHandle = setTimeout(onTimeout, 8000);
 }
 
-function offerLowAccuracyGps(best, threshold, onSuccess){
+function offerLowAccuracyGps(best, threshold, onSuccess, onFailure){
   pendingGpsAccept = () => {
     closeModal();
     onSuccess({ lat: best.lat, lon: best.lon, accuracy: best.accuracy });
   };
   pendingGpsRetry = () => {
     closeModal();
-    captureGps(onSuccess);
+    captureGps(onSuccess, onFailure);
   };
+  pendingGpsCancelFailureFn = onFailure || null;
   showModal(`
-    <div class="modal-head"><h3>GPS-Genauigkeit gering</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>GPS-Genauigkeit gering</h3><button class="close-x" onclick="cancelGpsFailure()">✕</button></div>
     <div class="modal-body">
       <p class="hint" style="margin-top:0">Beste erreichte Genauigkeit: <strong>±${Math.round(best.accuracy)} m</strong> (Ziel: ±${threshold} m).</p>
       <p class="hint">Am Fenster/im Freien wird GPS meist genauer. Trotzdem übernehmen oder nochmal versuchen?</p>
     </div>
     <div class="modal-foot">
-      <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn ghost" onclick="cancelGpsFailure()">Abbrechen</button>
       <button class="btn" onclick="pendingGpsRetry()">🔄 Erneut versuchen</button>
       <button class="btn primary" onclick="pendingGpsAccept()">Trotzdem verwenden</button>
     </div>
   `);
+}
+let pendingGpsCancelFailureFn = null;
+function cancelGpsFailure(){
+  closeModal();
+  const fn = pendingGpsCancelFailureFn;
+  pendingGpsCancelFailureFn = null;
+  if(fn) fn();
 }
 function captureGpsForAuftrag(id){
   captureGps((coords) => {
