@@ -2664,48 +2664,50 @@ function confirmResetKoordinaten(){
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetKoordinaten()">Koordinaten zurücksetzen</button></div>
   `);
 }
-function findSuspectCoordGroups(list){
-  // Groups entries by identical coordinate value, then only flags a group as
-  // "suspect" if it contains more than one genuinely different Messlokation/
-  // Zähler — that's the actual signature of the merge bug. A group that's
-  // just the same real-world address legitimately repeated, or a single
-  // manually-corrected entry, is left alone.
-  const groups = {};
-  list.forEach(item => {
-    if(!item.koordinaten) return;
-    const key = fmtCoords(item.koordinaten);
-    if(!groups[key]) groups[key] = [];
-    groups[key].push(item);
+function findSuspectAuftraege(){
+  // The actual bug: multiple Aufträge with DIFFERENT Messlokation/Zähler
+  // incorrectly pointing at the very SAME Adressbuch-entry object (adrEntryId).
+  // That's a real merge error. This deliberately does NOT look at coordinate
+  // VALUES, because it's entirely legitimate for many different Messlokationen
+  // to share the same real-world position (e.g. a Stationsgebäude or
+  // Zähleranschlusssäule serving several customers) — that's correct data,
+  // not a bug, and must never be touched.
+  const byEntry = {};
+  auftraege.forEach(a => {
+    if(!a.adrEntryId) return;
+    if(!byEntry[a.adrEntryId]) byEntry[a.adrEntryId] = [];
+    byEntry[a.adrEntryId].push(a);
   });
   const suspects = [];
-  Object.values(groups).forEach(group => {
+  Object.values(byEntry).forEach(group => {
     if(group.length < 2) return;
-    const distinctKeys = new Set(group.map(item => norm(item.kundencode) + '|' + norm(item.zaehler)));
+    const distinctKeys = new Set(group.map(a => norm(a.kundencode) + '|' + norm(a.zaehler)));
     if(distinctKeys.size > 1) suspects.push(...group);
   });
   return suspects;
 }
 function doResetKoordinaten(){
-  const suspectAuftraege = findSuspectCoordGroups(auftraege);
-  const suspectAdr = findSuspectCoordGroups(adressbuch);
+  const suspects = findSuspectAuftraege();
 
-  suspectAuftraege.forEach(a => {
-    a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: '' });
+  suspects.forEach(a => {
+    if(a.koordinaten){
+      a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new:'' });
+    }
     a.koordinaten = null;
     a.koordinatenAktualisiertAm = '';
     a.koordinatenGenauigkeit = null;
+    a.koordinatenQuelle = '';
+    // Also clear the wrong shared link itself — otherwise a reimport would just
+    // find the same wrongly-shared Adressbuch entry again via this stale id
+    // and the coordinates would get merged right back together.
+    a.history.push({ ts: nowIso(), field:'adrEntryId', old: a.adrEntryId, new:'(wird bei Import/Speichern neu verknüpft)' });
+    a.adrEntryId = '';
   });
-  suspectAdr.forEach(e => {
-    e.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(e.koordinaten), new: '' });
-    e.koordinaten = null;
-    e.koordinatenAktualisiertAm = '';
-    e.koordinatenGenauigkeit = null;
-  });
+
   saveAuftraege();
-  saveAdressbuch();
   closeModal();
   render();
-  showToast(`${suspectAuftraege.length} Aufträge und ${suspectAdr.length} Adressbuch-Einträge zurückgesetzt — Rest blieb unangetastet. Jetzt Ursprungsdatei neu importieren.`);
+  showToast(`${suspects.length} Aufträge korrigiert (Koordinaten + fehlerhafte Verknüpfung aufgelöst) — Rest blieb komplett unangetastet. Jetzt Ursprungsdatei neu importieren.`);
 }
 
 function confirmResetMapping(){
@@ -2867,6 +2869,7 @@ function renderTabView(tabKey, fullList){
         <span class="muted" style="font-size:12px">Farbe:</span>
         <button class="btn small ${mapColorMode[tabKey]==='status'?'active':''}" onclick="setMapColorMode('${tabKey}','status')">Status</button>
         <button class="btn small ${mapColorMode[tabKey]==='vorgang'?'active':''}" onclick="setMapColorMode('${tabKey}','vorgang')">Vorgangstyp</button>
+        <button class="btn small ${showMyLocation[tabKey]?'active':''}" onclick="toggleDistanceSort('${tabKey}')">📍 Mein Standort</button>
       ` : `
         <button class="btn small ${distanceSortActive[tabKey]?'active':''}" onclick="toggleDistanceSort('${tabKey}')">📍 Nächste zuerst</button>
       `}
@@ -2997,6 +3000,15 @@ function initMapForTab(tabKey, list){
     bounds.push([a.koordinaten.lat, a.koordinaten.lon]);
   });
   map.addLayer(cluster);
+  if(showMyLocation[tabKey] && userLocationCache){
+    const meIcon = L.divIcon({
+      className: '',
+      html: `<div style="width:22px;height:22px;border-radius:50%;background:#2b5a8c;border:3px solid #fff;box-shadow:0 0 0 2px #2b5a8c, 0 0 8px rgba(43,90,140,.6)"></div>`,
+      iconSize:[22,22], iconAnchor:[11,11]
+    });
+    L.marker([userLocationCache.lat, userLocationCache.lon], { icon: meIcon }).addTo(map).bindPopup('📍 Dein Standort');
+    bounds.push([userLocationCache.lat, userLocationCache.lon]);
+  }
   if(bounds.length === 1){ map.setView(bounds[0], 15); }
   else{ map.fitBounds(bounds, { padding: [30,30] }); }
 }
@@ -3510,7 +3522,28 @@ function updateStandortSuggestions(){
   const values = Array.from(new Set(adressbuch.map(e => (e.standort||'').trim()).filter(Boolean))).sort();
   el.innerHTML = values.map(v => `<option value="${escapeHtml(v)}">`).join('');
 }
+let showMyLocation = { offen: false, erledigt: false };
+
 function toggleDistanceSort(tabKey){
+  if(viewMode[tabKey] === 'karte'){
+    if(showMyLocation[tabKey]){
+      showMyLocation[tabKey] = false;
+      render();
+      return;
+    }
+    if(!navigator.geolocation){ showToast('Standortzugriff wird nicht unterstützt'); return; }
+    showToast('Standort wird ermittelt…');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        userLocationCache = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        showMyLocation[tabKey] = true;
+        render();
+      },
+      () => showToast('Standort konnte nicht ermittelt werden'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+    return;
+  }
   if(distanceSortActive[tabKey]){
     distanceSortActive[tabKey] = false;
     render();
