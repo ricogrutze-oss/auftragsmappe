@@ -1560,6 +1560,7 @@ function openMappingModal(manual){
   const basicFields = [
     { key:'kundencode', label:'Messlokation', required:true },
     { key:'vorgang', label:'Vorgang', required:true },
+    { key:'auftragsnummer', label:'Auftragsnummer', required:false },
     { key:'auftragsbeschreibung', label:'Auftragsbeschreibung', required:false },
     { key:'telefonnummer', label:'Telefonnummer', required:false },
     { key:'email', label:'E-Mail', required:false },
@@ -1630,7 +1631,7 @@ function openMappingModal(manual){
 }
 
 function confirmMapping(manual){
-  const fields = ['kundencode','vorgang','auftragsbeschreibung','telefonnummer','email','zaehlerplatzId',
+  const fields = ['kundencode','vorgang','auftragsnummer','auftragsbeschreibung','telefonnummer','email','zaehlerplatzId',
     'kundenname','vorname','nachname',
     'adresse','strasse','hausnummer','hausnummerzusatz','ortsteil','ort',
     'zaehler','bauform','standort',
@@ -1716,15 +1717,21 @@ function runImport(){
   const m = columnMapping;
   let added = 0, updatedExisting = 0, skippedDup = 0, skippedEmpty = 0, adrOnly = 0;
 
-  // map of existing OPEN (not erledigt) auftraege by key, so duplicates can be backfilled
+  // Map of ALL existing Aufträge (including erledigt) by key, so duplicates —
+  // including already-completed ones — are recognized and never recreated.
+  // Auftragsnummer is a true unique identifier per real work order, so a
+  // completed one must always "win" over a re-imported copy of itself.
+  const useAuftragsnummer = !!m.auftragsnummer;
   const existingByKey = new Map();
-  auftraege.filter(a => a.status !== 'erledigt').forEach(a => {
-    existingByKey.set(norm(a.kundencode) + '|' + norm(a.vorgang), a);
+  auftraege.forEach(a => {
+    const secondPart = useAuftragsnummer ? norm(a.auftragsnummer) : norm(a.vorgang);
+    existingByKey.set(norm(a.kundencode) + '|' + secondPart, a);
   });
 
   for(const raw of pendingCsvRows){
     const kundencode = toStr(m.kundencode ? raw[m.kundencode] : '');
     const vorgang = toStr(m.vorgang ? raw[m.vorgang] : '');
+    const auftragsnummer = toStr(m.auftragsnummer ? raw[m.auftragsnummer] : '');
     const zaehlerplatzId = toStr(m.zaehlerplatzId ? raw[m.zaehlerplatzId] : '');
     const telefonnummer = toStr(m.telefonnummer ? raw[m.telefonnummer] : '');
     const email = toStr(m.email ? raw[m.email] : '');
@@ -1754,14 +1761,14 @@ function runImport(){
       continue; // Adressbuch-only mode, or no Auftragstyp/Messlokation → address book updated, but no Auftrag created
     }
 
-    const key = norm(kundencode) + '|' + norm(vorgang);
+    const key = norm(kundencode) + '|' + (useAuftragsnummer ? norm(auftragsnummer) : norm(vorgang));
 
     if(existingByKey.has(key)){
       // Duplicate: don't touch fields already filled (manual edits win),
       // but backfill anything still empty — covers newly-mapped columns
       // (e.g. Auftragsbeschreibung) that didn't exist on the first import.
       const existing = existingByKey.get(key);
-      const backfill = { telefonnummer, email, auftragsbeschreibung, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort };
+      const backfill = { telefonnummer, email, auftragsbeschreibung, adresse, zaehlerplatzId, koordinaten, kundenname, zaehler, bauform, standort, auftragsnummer };
       let changed = false;
       Object.entries(backfill).forEach(([field, val]) => {
         const isEmpty = existing[field] === '' || existing[field] === null || existing[field] === undefined;
@@ -1784,6 +1791,7 @@ function runImport(){
       id: uid(),
       kundencode: kundencode.trim(),
       vorgang: vorgang.trim(),
+      auftragsnummer: auftragsnummer.trim(),
       auftragsbeschreibung: auftragsbeschreibung,
       telefonnummer: telefonnummer || adrEntry.telefonnummer || '',
       email: email || adrEntry.email || '',
@@ -2666,7 +2674,7 @@ function confirmCleanupDuplicates(){
   // preview count first
   const groups = {};
   auftraege.forEach(a => {
-    const key = norm(a.kundencode) + '|' + norm(a.zaehler);
+    const key = norm(a.kundencode) + '|' + (a.auftragsnummer ? norm(a.auftragsnummer) : norm(a.zaehler));
     if(!groups[key]) groups[key] = [];
     groups[key].push(a);
   });
@@ -2688,7 +2696,7 @@ function confirmCleanupDuplicates(){
 function doCleanupDuplicates(){
   const groups = {};
   auftraege.forEach(a => {
-    const key = norm(a.kundencode) + '|' + norm(a.zaehler);
+    const key = norm(a.kundencode) + '|' + (a.auftragsnummer ? norm(a.auftragsnummer) : norm(a.zaehler));
     if(!groups[key]) groups[key] = [];
     groups[key].push(a);
   });
