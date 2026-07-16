@@ -2967,6 +2967,7 @@ function initMapForTab(tabKey, list){
       ${a.adresse ? `<div style="margin-top:6px">${escapeHtml(a.adresse)}</div>` : ''}
       ${a.standort ? `<div class="muted">${escapeHtml(a.standort)}</div>` : ''}
       ${a.telefonnummer ? `<div class="muted">${escapeHtml(a.telefonnummer)}</div>` : ''}
+      ${a.koordinaten && a.koordinatenQuelle ? `<div class="muted" style="font-size:11px">${a.koordinatenQuelle==='manuell' ? '✋ Koordinaten manuell gesetzt' : '📥 Koordinaten aus Import'}</div>` : ''}
       <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px">
         <input type="checkbox" ${isSelected?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"> Für Route auswählen
       </label>
@@ -3631,6 +3632,7 @@ const CELL_RENDERERS = {
         <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(a.koordinaten))}"
           onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px;flex:1">
         <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
+        ${a.koordinaten && a.koordinatenQuelle ? `<span title="${a.koordinatenQuelle==='manuell' ? 'Manuell gesetzt' : 'Aus Import'}" style="font-size:13px">${a.koordinatenQuelle==='manuell' ? '✋' : '📥'}</span>` : ''}
       </div>
     </td>`,
 };
@@ -3990,7 +3992,7 @@ function renderAdressbuch(){
           <input class="adr-addr-input" type="text" value="${escapeHtml(e.standort||'')}" placeholder="Standort" list="standortSuggestions"
             onchange="updateAdrField('${e.id}','standort', this.value)" style="flex:1">
         </div>
-        ${mostRecentUpdateStr(e) ? `<span style="font-size:11px;color:var(--ink-soft)">Zuletzt geändert: ${mostRecentUpdateStr(e)}</span>` : ''}
+        ${mostRecentUpdateStr(e) ? `<span style="font-size:11px;color:var(--ink-soft)">Zuletzt geändert: ${mostRecentUpdateStr(e)}${e.koordinaten && e.koordinatenQuelle ? ` · ${e.koordinatenQuelle==='manuell' ? '✋ Koordinaten manuell' : '📥 Koordinaten aus Import'}` : ''}</span>` : ''}
       </div>
       <div class="adr-card-actions">
         ${e.telefonnummer
