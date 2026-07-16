@@ -939,7 +939,19 @@ async function loadAll(){
     }
   });
   if(migratedPhotos) saveAuftraege();
+  // backfill koordinatenQuelle for data that predates this feature — best
+  // guess is 'import' since we can't know retroactively who set it by hand.
+  let migratedQuelle = false;
+  auftraege.forEach(a => {
+    if(a.koordinaten && !a.koordinatenQuelle){ a.koordinatenQuelle = 'import'; migratedQuelle = true; }
+  });
+  if(migratedQuelle) saveAuftraege();
   try{ const v = await kvGet('adressbuch'); adressbuch = v ? JSON.parse(v) : []; }catch(e){ adressbuch = []; }
+  let migratedQuelleAdr = false;
+  adressbuch.forEach(e => {
+    if(e.koordinaten && !e.koordinatenQuelle){ e.koordinatenQuelle = 'import'; migratedQuelleAdr = true; }
+  });
+  if(migratedQuelleAdr) saveAdressbuch();
   try{ const v = await kvGet('settings'); settings = v ? JSON.parse(v) : { organizerEmail:'', lastImport:null }; }
   catch(e){ settings = { organizerEmail:'', lastImport:null }; }
   if(!settings.visibleColumns){ settings.visibleColumns = Object.assign({}, DEFAULT_VISIBLE_COLUMNS); }
@@ -1264,6 +1276,11 @@ function upsertAdrFromImport(row){
 function todayDe(){
   const d = new Date();
   return `${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+}
+function koordinatenQuelleDot(quelle, withLabel){
+  if(quelle === 'manuell') return `<span title="Manuell gesetzt" style="color:#2c7a4b;font-size:14px">🟢</span>${withLabel ? ' manuell gesetzt' : ''}`;
+  if(quelle === 'import') return `<span title="Aus Import" style="color:#a3392f;font-size:14px">🔴</span>${withLabel ? ' aus Import' : ''}`;
+  return '';
 }
 function fmtHistoryDate(ts){
   const d = new Date(ts);
@@ -2967,7 +2984,7 @@ function initMapForTab(tabKey, list){
       ${a.adresse ? `<div style="margin-top:6px">${escapeHtml(a.adresse)}</div>` : ''}
       ${a.standort ? `<div class="muted">${escapeHtml(a.standort)}</div>` : ''}
       ${a.telefonnummer ? `<div class="muted">${escapeHtml(a.telefonnummer)}</div>` : ''}
-      ${a.koordinaten && a.koordinatenQuelle ? `<div class="muted" style="font-size:11px">${a.koordinatenQuelle==='manuell' ? '✋ Koordinaten manuell gesetzt' : '📥 Koordinaten aus Import'}</div>` : ''}
+      ${a.koordinaten && a.koordinatenQuelle ? `<div class="muted" style="font-size:11px">${koordinatenQuelleDot(a.koordinatenQuelle, true)}</div>` : ''}
       <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12.5px">
         <input type="checkbox" ${isSelected?'checked':''} onchange="toggleSelect('${tabKey}','${a.id}')"> Für Route auswählen
       </label>
@@ -3632,7 +3649,7 @@ const CELL_RENDERERS = {
         <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(a.koordinaten))}"
           onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="font-family:var(--font-mono);font-size:12px;flex:1">
         <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
-        ${a.koordinaten && a.koordinatenQuelle ? `<span title="${a.koordinatenQuelle==='manuell' ? 'Manuell gesetzt' : 'Aus Import'}" style="font-size:13px">${a.koordinatenQuelle==='manuell' ? '✋' : '📥'}</span>` : ''}
+        ${a.koordinaten && a.koordinatenQuelle ? koordinatenQuelleDot(a.koordinatenQuelle, false) : ''}
       </div>
     </td>`,
 };
@@ -3992,7 +4009,7 @@ function renderAdressbuch(){
           <input class="adr-addr-input" type="text" value="${escapeHtml(e.standort||'')}" placeholder="Standort" list="standortSuggestions"
             onchange="updateAdrField('${e.id}','standort', this.value)" style="flex:1">
         </div>
-        ${mostRecentUpdateStr(e) ? `<span style="font-size:11px;color:var(--ink-soft)">Zuletzt geändert: ${mostRecentUpdateStr(e)}${e.koordinaten && e.koordinatenQuelle ? ` · ${e.koordinatenQuelle==='manuell' ? '✋ Koordinaten manuell' : '📥 Koordinaten aus Import'}` : ''}</span>` : ''}
+        ${mostRecentUpdateStr(e) ? `<span style="font-size:11px;color:var(--ink-soft)">Zuletzt geändert: ${mostRecentUpdateStr(e)}${e.koordinaten && e.koordinatenQuelle ? ` · ${koordinatenQuelleDot(e.koordinatenQuelle, true)}` : ''}</span>` : ''}
       </div>
       <div class="adr-card-actions">
         ${e.telefonnummer
@@ -4013,7 +4030,7 @@ function renderAdressbuch(){
               <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="flex:1;font-family:var(--font-mono);font-size:12px">
               <button class="icon-btn" onclick="captureGpsForAdr('${e.id}')" title="Aktuellen Standort übernehmen">📍</button>
             </div>
-            ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}${e.koordinatenGenauigkeit ? ` · Genauigkeit ±${e.koordinatenGenauigkeit}m` : ''}${e.koordinatenQuelle==='manuell' ? ' · <strong>✋ manuell gesetzt</strong>' : e.koordinatenQuelle==='import' ? ' · 📥 aus Import' : ''}</p>` : ''}
+            ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}${e.koordinatenGenauigkeit ? ` · Genauigkeit ±${e.koordinatenGenauigkeit}m` : ''}${e.koordinatenQuelle ? ` · ${koordinatenQuelleDot(e.koordinatenQuelle, true)}` : ''}</p>` : ''}
           </div>
           <div class="field">
             <label style="display:flex;align-items:center;justify-content:space-between">
@@ -4197,7 +4214,7 @@ function openAuftragEditModal(id){
               onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="flex:1;font-family:var(--font-mono);font-size:13px">
             <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
           </div>
-          ${a.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(a.koordinatenAktualisiertAm)}${a.koordinatenGenauigkeit ? ` · Genauigkeit ±${a.koordinatenGenauigkeit}m` : ''}${a.koordinatenQuelle==='manuell' ? ' · <strong>✋ manuell gesetzt</strong>' : a.koordinatenQuelle==='import' ? ' · 📥 aus Import' : ''}</p>` : ''}
+          ${a.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(a.koordinatenAktualisiertAm)}${a.koordinatenGenauigkeit ? ` · Genauigkeit ±${a.koordinatenGenauigkeit}m` : ''}${a.koordinatenQuelle ? ` · ${koordinatenQuelleDot(a.koordinatenQuelle, true)}` : ''}</p>` : ''}
         </div>
         <div class="field">
           <label>📞 Telefon</label>
