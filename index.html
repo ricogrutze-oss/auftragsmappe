@@ -1212,6 +1212,7 @@ function upsertAdrFromImport(row){
       email: row.email || '',
       koordinaten: row.koordinaten || null,
       koordinatenAktualisiertAm: row.koordinaten ? todayDe() : '',
+      koordinatenQuelle: row.koordinaten ? 'import' : '',
       zaehler: row.zaehler || '',
       bauform: row.bauform || '',
       standort: row.standort || '',
@@ -1255,6 +1256,7 @@ function upsertAdrFromImport(row){
     if(!entry.koordinaten && row.koordinaten){
       entry.koordinaten = row.koordinaten;
       entry.koordinatenAktualisiertAm = todayDe();
+      entry.koordinatenQuelle = 'import';
     }
   }
   return entry;
@@ -1292,6 +1294,7 @@ function updateAuftragCoords(id, value){
     a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: '' });
     a.koordinaten = null;
     a.koordinatenAktualisiertAm = '';
+    a.koordinatenQuelle = '';
     saveAuftraege();
     updateAdrCoords(ensureAdrEntryForAuftrag(a).id, null);
     render();
@@ -1306,6 +1309,7 @@ function updateAuftragCoords(id, value){
   a.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: fmtCoords(parsed) });
   a.koordinaten = parsed;
   a.koordinatenAktualisiertAm = todayDe();
+  a.koordinatenQuelle = 'manuell';
   saveAuftraege();
   updateAdrCoords(ensureAdrEntryForAuftrag(a).id, parsed);
   showToast('Gespeichert');
@@ -1428,6 +1432,7 @@ function updateAdrCoords(entryId, coords){
   entry.history.push({ ts: nowIso(), field:'koordinaten', old: oldStr, new: newStr });
   entry.koordinaten = coords;
   entry.koordinatenAktualisiertAm = coords ? todayDe() : '';
+  entry.koordinatenQuelle = coords ? 'manuell' : '';
   saveAdressbuch();
 
   const linked = auftraege.filter(a => a.adrEntryId === entryId);
@@ -1436,6 +1441,7 @@ function updateAdrCoords(entryId, coords){
       a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: newStr });
       a.koordinaten = coords;
       a.koordinatenAktualisiertAm = coords ? todayDe() : '';
+      a.koordinatenQuelle = coords ? 'manuell' : '';
     });
     saveAuftraege();
   }
@@ -1746,6 +1752,7 @@ function runImport(){
         if(isEmpty && hasVal){
           existing.history.push({ ts: nowIso(), field, old:'', new: field==='koordinaten' ? fmtCoords(val) : val });
           existing[field] = val;
+          if(field === 'koordinaten') existing.koordinatenQuelle = 'import';
           changed = true;
         }
       });
@@ -1766,6 +1773,7 @@ function runImport(){
       adresse: adresse || adrEntry.adresse || '',
       zaehlerplatzId: zaehlerplatzId || adrEntry.zaehlerplatzId || '',
       koordinaten: koordinaten || adrEntry.koordinaten || null,
+      koordinatenQuelle: (koordinaten || adrEntry.koordinaten) ? (adrEntry.koordinatenQuelle || 'import') : '',
       kundenname: kundenname || adrEntry.kundenname || '',
       zaehler: zaehler || adrEntry.zaehler || '',
       bauform: bauform || adrEntry.bauform || '',
@@ -2594,7 +2602,7 @@ function renderEinstellungen(){
       <div class="settings-row">
         <button class="btn danger" onclick="confirmResetKoordinaten()">Nur Koordinaten zurücksetzen</button>
       </div>
-      <p class="hint">Leert ausschließlich das Koordinatenfeld bei allen Aufträgen und Adressbuch-Einträgen — Status, Notizen, Termine, Fotos und alles andere bleibt komplett erhalten. Gedacht für den Fall, dass sich Koordinaten durch einen Zusammenführungsfehler vermischt haben. Anschließend deine Ursprungsdatei einmal neu importieren, dann werden die korrekten Koordinaten pro Zeile automatisch wieder aufgefüllt (keine Duplikate, da Aufträge über Messlokation+Vorgang erkannt werden).</p>
+      <p class="hint">Sucht gezielt nach Koordinaten, die bei <strong>mehreren unterschiedlichen Messlokationen</strong> exakt identisch sind — das ist die typische Spur des Zusammenführungsfehlers. Nur diese werden geleert; einzigartige Koordinaten (auch von dir manuell korrigierte!) bleiben unangetastet. Status, Notizen, Termine und Fotos sind davon sowieso nie betroffen. Anschließend deine Ursprungsdatei einmal neu importieren, um die betroffenen Zeilen wieder korrekt aufzufüllen (keine Duplikate, da Aufträge über Messlokation+Vorgang erkannt werden).</p>
     </div>
   `;
 }
@@ -2633,25 +2641,45 @@ function confirmResetKoordinaten(){
   showModal(`
     <div class="modal-head"><h3>Nur Koordinaten zurücksetzen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <p class="hint" style="margin-top:0">Leert das Koordinatenfeld bei <strong>allen</strong> Aufträgen und Adressbuch-Einträgen. Status, Notizen, Termine, Zähler, Fotos und alles andere bleiben unangetastet.</p>
+      <p class="hint" style="margin-top:0">Leert das Koordinatenfeld nur bei Einträgen, die exakt dieselbe Position wie eine <strong>andere, tatsächlich unterschiedliche</strong> Messlokation haben — das ist die Spur des Fehlers. Einzigartige (auch manuell korrigierte) Koordinaten bleiben unangetastet, ebenso Status, Notizen, Termine, Zähler und Fotos.</p>
       <p class="hint">Danach deine Ursprungsdatei einmal neu importieren, um die korrekten Koordinaten pro Zeile wieder aufzufüllen. Nicht rückgängig zu machen.</p>
     </div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetKoordinaten()">Koordinaten zurücksetzen</button></div>
   `);
 }
+function findSuspectCoordGroups(list){
+  // Groups entries by identical coordinate value, then only flags a group as
+  // "suspect" if it contains more than one genuinely different Messlokation/
+  // Zähler — that's the actual signature of the merge bug. A group that's
+  // just the same real-world address legitimately repeated, or a single
+  // manually-corrected entry, is left alone.
+  const groups = {};
+  list.forEach(item => {
+    if(!item.koordinaten) return;
+    const key = fmtCoords(item.koordinaten);
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  });
+  const suspects = [];
+  Object.values(groups).forEach(group => {
+    if(group.length < 2) return;
+    const distinctKeys = new Set(group.map(item => norm(item.kundencode) + '|' + norm(item.zaehler)));
+    if(distinctKeys.size > 1) suspects.push(...group);
+  });
+  return suspects;
+}
 function doResetKoordinaten(){
-  auftraege.forEach(a => {
-    if(a.koordinaten){
-      a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: '' });
-    }
+  const suspectAuftraege = findSuspectCoordGroups(auftraege);
+  const suspectAdr = findSuspectCoordGroups(adressbuch);
+
+  suspectAuftraege.forEach(a => {
+    a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: '' });
     a.koordinaten = null;
     a.koordinatenAktualisiertAm = '';
     a.koordinatenGenauigkeit = null;
   });
-  adressbuch.forEach(e => {
-    if(e.koordinaten){
-      e.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(e.koordinaten), new: '' });
-    }
+  suspectAdr.forEach(e => {
+    e.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(e.koordinaten), new: '' });
     e.koordinaten = null;
     e.koordinatenAktualisiertAm = '';
     e.koordinatenGenauigkeit = null;
@@ -2660,7 +2688,7 @@ function doResetKoordinaten(){
   saveAdressbuch();
   closeModal();
   render();
-  showToast('Koordinaten zurückgesetzt — jetzt Ursprungsdatei neu importieren');
+  showToast(`${suspectAuftraege.length} Aufträge und ${suspectAdr.length} Adressbuch-Einträge zurückgesetzt — Rest blieb unangetastet. Jetzt Ursprungsdatei neu importieren.`);
 }
 
 function confirmResetMapping(){
@@ -3806,6 +3834,7 @@ function createNewAdrEntry(){
     koordinaten,
     koordinatenAktualisiertAm: todayDe(),
     koordinatenGenauigkeit: newAdrEntryGpsAccuracy,
+    koordinatenQuelle: koordinaten ? 'manuell' : '',
     zaehler,
     bauform: val('new_adr_bauform'),
     standort: val('new_adr_standort'),
@@ -3982,7 +4011,7 @@ function renderAdressbuch(){
               <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" onchange="updateAdrCoordsField('${e.id}', this.value)" style="flex:1;font-family:var(--font-mono);font-size:12px">
               <button class="icon-btn" onclick="captureGpsForAdr('${e.id}')" title="Aktuellen Standort übernehmen">📍</button>
             </div>
-            ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}${e.koordinatenGenauigkeit ? ` · Genauigkeit ±${e.koordinatenGenauigkeit}m` : ''}</p>` : ''}
+            ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}${e.koordinatenGenauigkeit ? ` · Genauigkeit ±${e.koordinatenGenauigkeit}m` : ''}${e.koordinatenQuelle==='manuell' ? ' · <strong>✋ manuell gesetzt</strong>' : e.koordinatenQuelle==='import' ? ' · 📥 aus Import' : ''}</p>` : ''}
           </div>
           <div class="field">
             <label style="display:flex;align-items:center;justify-content:space-between">
@@ -4166,7 +4195,7 @@ function openAuftragEditModal(id){
               onchange="updateAuftragCoords('${a.id}', this.value)" placeholder="52.130, 11.630" style="flex:1;font-family:var(--font-mono);font-size:13px">
             <button class="icon-btn" onclick="captureGpsForAuftrag('${a.id}')" title="Aktuellen Standort übernehmen">📍</button>
           </div>
-          ${a.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(a.koordinatenAktualisiertAm)}${a.koordinatenGenauigkeit ? ` · Genauigkeit ±${a.koordinatenGenauigkeit}m` : ''}</p>` : ''}
+          ${a.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(a.koordinatenAktualisiertAm)}${a.koordinatenGenauigkeit ? ` · Genauigkeit ±${a.koordinatenGenauigkeit}m` : ''}${a.koordinatenQuelle==='manuell' ? ' · <strong>✋ manuell gesetzt</strong>' : a.koordinatenQuelle==='import' ? ' · 📥 aus Import' : ''}</p>` : ''}
         </div>
         <div class="field">
           <label>📞 Telefon</label>
