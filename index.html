@@ -876,18 +876,19 @@ async function refreshPhotoArea(auftragId){
 
 function photoAreaHtml(auftragId, photos){
   const thumbs = photos.map((p, idx) => `
-    <div style="position:relative;flex:0 0 auto">
-      <img src="${p.src}" style="width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;display:block" onclick="openPhotoFull('${auftragId}', ${idx})">
-      ${p.koordinaten ? `<button class="icon-btn" onclick="navigateToCoords(${p.koordinaten.lat},${p.koordinaten.lon})" title="Zu diesem Foto-Standort navigieren" style="position:absolute;bottom:4px;left:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗺️</button>` : ''}
-      <button class="icon-btn" onclick="deletePhoto('${auftragId}', ${p.filename ? `'${p.filename}'` : 'null'})" title="Löschen" style="position:absolute;top:4px;right:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗑</button>
-      ${p.genauigkeit ? `<span style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,.55);color:#fff;font-size:10px;padding:1px 5px;border-radius:6px">±${p.genauigkeit}m</span>` : ''}
+    <div style="flex:0 0 auto;width:110px">
+      <div style="position:relative">
+        <img src="${p.src}" style="width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;display:block" onclick="openPhotoFull('${auftragId}', ${idx})">
+        <button class="icon-btn" onclick="deletePhoto('${auftragId}', ${p.filename ? `'${p.filename}'` : 'null'})" title="Löschen" style="position:absolute;top:4px;right:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗑</button>
+      </div>
+      ${p.koordinaten ? `<a href="#" onclick="navigateToCoords(${p.koordinaten.lat},${p.koordinaten.lon});return false" style="display:block;text-align:center;font-size:11px;color:var(--teal-deep);margin-top:4px;text-decoration:underline">${fmtCoords(p.koordinaten)}${p.genauigkeit ? ` (±${p.genauigkeit}m)` : ''}</a>` : ''}
     </div>`).join('');
   return `
     <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px">${thumbs}</div>
     <div class="settings-row">
       <button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 ${photos.length ? 'Foto hinzufügen' : 'Foto aufnehmen'}</button>
     </div>
-    ${photos.length ? `<p class="hint" style="margin:6px 0 0">📍 Standort wird bei jedem Foto frisch gemessen und mit gespeichert (EXIF + 🗺️-Button je Foto)</p>` : ''}`;
+    ${photos.length ? `<p class="hint" style="margin:6px 0 0">📍 Standort wird bei jedem Foto frisch gemessen und mit gespeichert (EXIF + Link unterm Bild)</p>` : ''}`;
 }
 
 async function openPhotoFull(auftragId, idx){
@@ -1183,20 +1184,10 @@ function scheduleFolderSync(){
    Address book helpers
 --------------------------------------------------------------- */
 function findAdrEntry(zaehlerplatzId, kundencode, adresse, zaehler){
-  // Compound match (most precise): Messlokation + Zähler together identify one
-  // exact metering point. This is now the PRIMARY key — Messlokation alone
-  // was merging distinct locations that happen to share a customer/contract
-  // number, which then cascaded wrong coordinates across unrelated Aufträge.
-  if(kundencode && zaehler){
-    const hit = adressbuch.find(a => a.kundencode && a.zaehler
-      && norm(a.kundencode) === norm(kundencode) && norm(a.zaehler) === norm(zaehler));
-    if(hit) return hit;
-  }
-  // Messlokation alone only as a fallback for Neuanlagen (no Zähler yet) — and
-  // only matches an entry that ALSO has no Zähler yet, so it never merges
-  // into an entry that already belongs to a different, specific meter.
-  if(kundencode && !zaehler){
-    const hit = adressbuch.find(a => a.kundencode && !a.zaehler && norm(a.kundencode) === norm(kundencode));
+  // Messlokation ist laut Nutzer garantiert eindeutig — genau ein Eintrag pro
+  // Messlokation, daher reicht sie allein als verlässlicher Haupt-Schlüssel.
+  if(kundencode){
+    const hit = adressbuch.find(a => a.kundencode && norm(a.kundencode) === norm(kundencode));
     if(hit) return hit;
   }
   // Fallback: match on Zähler(-nummer) alone. This is what lets a manually
@@ -2597,6 +2588,14 @@ function renderEinstellungen(){
       </div>
       <p class="hint">Zum Testen einer neuen Datenstruktur reicht meist „Alle Aufträge löschen" + „Spaltenzuordnung zurücksetzen". Das Adressbuch ist bewusst dauerhaft — lösche es nur, wenn du wirklich neu anfangen willst.</p>
     </div>
+
+    <div class="settings-section" style="border-color:var(--red-bg)">
+      <h4 style="color:var(--red)">Koordinaten korrigieren</h4>
+      <div class="settings-row">
+        <button class="btn danger" onclick="confirmResetKoordinaten()">Nur Koordinaten zurücksetzen</button>
+      </div>
+      <p class="hint">Leert ausschließlich das Koordinatenfeld bei allen Aufträgen und Adressbuch-Einträgen — Status, Notizen, Termine, Fotos und alles andere bleibt komplett erhalten. Gedacht für den Fall, dass sich Koordinaten durch einen Zusammenführungsfehler vermischt haben. Anschließend deine Ursprungsdatei einmal neu importieren, dann werden die korrekten Koordinaten pro Zeile automatisch wieder aufgefüllt (keine Duplikate, da Aufträge über Messlokation+Vorgang erkannt werden).</p>
+    </div>
   `;
 }
 
@@ -2628,6 +2627,40 @@ function doResetAdressbuch(){
   closeModal();
   render();
   showToast('Adressbuch gelöscht');
+}
+
+function confirmResetKoordinaten(){
+  showModal(`
+    <div class="modal-head"><h3>Nur Koordinaten zurücksetzen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Leert das Koordinatenfeld bei <strong>allen</strong> Aufträgen und Adressbuch-Einträgen. Status, Notizen, Termine, Zähler, Fotos und alles andere bleiben unangetastet.</p>
+      <p class="hint">Danach deine Ursprungsdatei einmal neu importieren, um die korrekten Koordinaten pro Zeile wieder aufzufüllen. Nicht rückgängig zu machen.</p>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetKoordinaten()">Koordinaten zurücksetzen</button></div>
+  `);
+}
+function doResetKoordinaten(){
+  auftraege.forEach(a => {
+    if(a.koordinaten){
+      a.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(a.koordinaten), new: '' });
+    }
+    a.koordinaten = null;
+    a.koordinatenAktualisiertAm = '';
+    a.koordinatenGenauigkeit = null;
+  });
+  adressbuch.forEach(e => {
+    if(e.koordinaten){
+      e.history.push({ ts: nowIso(), field:'koordinaten', old: fmtCoords(e.koordinaten), new: '' });
+    }
+    e.koordinaten = null;
+    e.koordinatenAktualisiertAm = '';
+    e.koordinatenGenauigkeit = null;
+  });
+  saveAuftraege();
+  saveAdressbuch();
+  closeModal();
+  render();
+  showToast('Koordinaten zurückgesetzt — jetzt Ursprungsdatei neu importieren');
 }
 
 function confirmResetMapping(){
