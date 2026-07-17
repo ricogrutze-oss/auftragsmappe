@@ -1800,7 +1800,7 @@ function runImport(){
       koordinaten: koordinaten || adrEntry.koordinaten || null,
       koordinatenQuelle: (koordinaten || adrEntry.koordinaten) ? (adrEntry.koordinatenQuelle || 'import') : '',
       kundenname: kundenname || adrEntry.kundenname || '',
-      zaehler: zaehler || adrEntry.zaehler || '',
+      zaehler: zaehler || '',
       bauform: bauform || adrEntry.bauform || '',
       standort: effectiveStandort,
       adrEntryId: adrEntry.id,
@@ -2631,11 +2631,19 @@ function renderEinstellungen(){
     </div>
 
     <div class="settings-section" style="border-color:var(--red-bg)">
+      <h4 style="color:var(--red)">Zähler korrigieren</h4>
+      <div class="settings-row">
+        <button class="btn danger" onclick="confirmResetZaehler()">Zähler-Werte zurücksetzen</button>
+      </div>
+      <p class="hint">Leert das Zähler-Feld bei allen Aufträgen/Adressbuch-Einträgen (Status, Notizen, Termine, Koordinaten, Fotos bleiben erhalten). Danach Ursprungsdatei neu importieren, um jeden Auftrag wieder mit dem korrekten, zeilenspezifischen Zähler zu befüllen. Nützlich, wenn Zähler-Werte durch frühere Test-Importe durcheinandergeraten sind.</p>
+    </div>
+
+    <div class="settings-section" style="border-color:var(--red-bg)">
       <h4 style="color:var(--red)">Duplikate bereinigen</h4>
       <div class="settings-row">
         <button class="btn danger" onclick="confirmCleanupDuplicates()">Doppelte Aufträge zusammenführen</button>
       </div>
-      <p class="hint">Fasst Aufträge mit gleicher Messlokation + Zählernummer zusammen, die doppelt vorhanden sind (z.B. nach mehrfachem Test-Import). Ist einer der Duplikate bereits <strong>erledigt</strong>, wird dieser behalten (inkl. Status, Notizen, Termin, Foto) — die übrigen werden entfernt, nachdem noch fehlende Felder aus ihnen übernommen wurden.</p>
+      <p class="hint">Du wählst vor jedem Lauf selbst das Kriterium (Auftragsnummer/Zähler/Vorgang/nur Messlokation). Ist einer der Duplikate bereits <strong>erledigt</strong>, wird dieser behalten (inkl. Status, Notizen, Termin, Foto) — die übrigen werden entfernt, nachdem noch fehlende Felder aus ihnen übernommen wurden.</p>
     </div>
   `;
 }
@@ -2670,39 +2678,62 @@ function doResetAdressbuch(){
   showToast('Adressbuch gelöscht');
 }
 
-function confirmCleanupDuplicates(){
-  // preview count first
+function dupKeyFor(mode, a){
+  switch(mode){
+    case 'auftragsnummer': return norm(a.kundencode) + '|' + norm(a.auftragsnummer);
+    case 'zaehler': return norm(a.kundencode) + '|' + norm(a.zaehler);
+    case 'vorgang': return norm(a.kundencode) + '|' + norm(a.vorgang);
+    case 'kundencode': return norm(a.kundencode);
+    default: return norm(a.kundencode) + '|' + norm(a.auftragsnummer);
+  }
+}
+function buildDupGroups(mode){
   const groups = {};
   auftraege.forEach(a => {
-    const key = norm(a.kundencode) + '|' + (a.auftragsnummer ? norm(a.auftragsnummer) : norm(a.zaehler));
+    const key = dupKeyFor(mode, a);
     if(!groups[key]) groups[key] = [];
     groups[key].push(a);
   });
+  return groups;
+}
+function confirmCleanupDuplicates(){
+  showModal(`
+    <div class="modal-head"><h3>Duplikate bereinigen</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Wonach sollen Duplikate erkannt werden?</p>
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:13.5px">
+        <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="dupKeyMode" value="auftragsnummer" checked> Messlokation + Auftragsnummer <span class="muted">(empfohlen, falls zugeordnet)</span></label>
+        <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="dupKeyMode" value="zaehler"> Messlokation + Zählernummer</label>
+        <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="dupKeyMode" value="vorgang"> Messlokation + Vorgang</label>
+        <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="dupKeyMode" value="kundencode"> Nur Messlokation <span class="muted">(fasst auch verschiedene Vorgänge zusammen!)</span></label>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn primary" onclick="previewCleanupDuplicates()">Weiter</button></div>
+  `);
+}
+function previewCleanupDuplicates(){
+  const mode = document.querySelector('input[name="dupKeyMode"]:checked').value;
+  const groups = buildDupGroups(mode);
   const dupGroups = Object.values(groups).filter(g => g.length > 1);
   const totalRemovable = dupGroups.reduce((sum,g) => sum + g.length - 1, 0);
   if(totalRemovable === 0){
-    showToast('Keine Duplikate gefunden');
+    showToast('Keine Duplikate gefunden für dieses Kriterium');
     return;
   }
   showModal(`
     <div class="modal-head"><h3>Duplikate zusammenführen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <p class="hint" style="margin-top:0">${dupGroups.length} Messlokation/Zähler-Kombinationen sind doppelt vorhanden — macht ${totalRemovable} überzählige Aufträge.</p>
+      <p class="hint" style="margin-top:0">${dupGroups.length} Kombinationen sind doppelt vorhanden — macht ${totalRemovable} überzählige Aufträge.</p>
       <p class="hint">Ist einer davon bereits erledigt, wird der behalten (mit Status, Notizen, Termin, Foto). Fehlende Felder werden vorher aus den anderen übernommen. Nicht rückgängig zu machen.</p>
     </div>
-    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doCleanupDuplicates()">Zusammenführen</button></div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doCleanupDuplicates('${mode}')">Zusammenführen</button></div>
   `);
 }
-function doCleanupDuplicates(){
-  const groups = {};
-  auftraege.forEach(a => {
-    const key = norm(a.kundencode) + '|' + (a.auftragsnummer ? norm(a.auftragsnummer) : norm(a.zaehler));
-    if(!groups[key]) groups[key] = [];
-    groups[key].push(a);
-  });
+function doCleanupDuplicates(mode){
+  const groups = buildDupGroups(mode);
   const toRemove = new Set();
   let removedCount = 0, keptErledigt = 0;
-  const mergeFields = ['telefonnummer','email','adresse','zaehlerplatzId','koordinaten','kundenname','zaehler','bauform','standort','auftragsbeschreibung'];
+  const mergeFields = ['telefonnummer','email','adresse','zaehlerplatzId','koordinaten','kundenname','zaehler','bauform','standort','auftragsbeschreibung','auftragsnummer'];
 
   Object.values(groups).forEach(group => {
     if(group.length < 2) return;
@@ -2769,6 +2800,38 @@ function findSuspectAuftraege(){
   });
   return suspects;
 }
+function confirmResetZaehler(){
+  showModal(`
+    <div class="modal-head"><h3>Zähler-Werte zurücksetzen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Leert das Zähler-Feld bei <strong>allen</strong> Aufträgen und Adressbuch-Einträgen. Status, Notizen, Termine, Koordinaten, Fotos und alles andere bleiben unangetastet.</p>
+      <p class="hint">Grund: Aus früheren Test-Importen können falsche/veraltete Zähler-Werte hängengeblieben sein, die ein normaler Reimport nicht überschreibt (er füllt nur leere Felder). Danach deine saubere Ursprungsdatei neu importieren, dann wird jeder Auftrag wieder mit seinem korrekten, zeilenspezifischen Zähler befüllt.</p>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetZaehler()">Zähler zurücksetzen</button></div>
+  `);
+}
+function doResetZaehler(){
+  let count = 0;
+  auftraege.forEach(a => {
+    if(a.zaehler){
+      a.history.push({ ts: nowIso(), field:'zaehler', old: a.zaehler, new:'' });
+      a.zaehler = '';
+      count++;
+    }
+  });
+  adressbuch.forEach(e => {
+    if(e.zaehler){
+      e.history.push({ ts: nowIso(), field:'zaehler', old: e.zaehler, new:'' });
+      e.zaehler = '';
+    }
+  });
+  saveAuftraege();
+  saveAdressbuch();
+  closeModal();
+  render();
+  showToast(`${count} Zähler-Werte zurückgesetzt — jetzt Ursprungsdatei neu importieren.`);
+}
+
 function doResetKoordinaten(){
   const suspects = findSuspectAuftraege();
 
