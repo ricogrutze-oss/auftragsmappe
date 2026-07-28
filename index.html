@@ -667,6 +667,14 @@ async function kvSet(key, val){
    damit der Haupt-Datensatz klein bleibt)
 --------------------------------------------------------------- */
 let photoTargetAuftragId = null;
+let photoTargetType = 'auftrag'; // 'auftrag' | 'adressbuch'
+
+function getPhotoRecord(id, type){
+  return type === 'adressbuch' ? adressbuch.find(x => x.id === id) : auftraege.find(x => x.id === id);
+}
+function savePhotoRecordOwner(type){
+  return type === 'adressbuch' ? saveAdressbuch() : saveAuftraege();
+}
 
 function decToDmsRational(dec){
   const abs = Math.abs(dec);
@@ -710,9 +718,11 @@ function buildPhotoOverlayLines(a, coords, accuracy){
   if(zaehlerLine) lines.push(zaehlerLine);
   const now = new Date();
   const datumZeit = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const ersteller = settings.userName ? `Ersteller: ${settings.userName}` : '';
   const coordStr = coords ? fmtCoords(coords) : '';
   const accStr = accuracy ? `±${accuracy}m` : '';
-  lines.push([datumZeit, coordStr, accStr].filter(Boolean).join(' · '));
+  lines.push([datumZeit, ersteller].filter(Boolean).join(' · '));
+  if(coordStr || accStr) lines.push([coordStr, accStr].filter(Boolean).join(' · '));
   return lines;
 }
 
@@ -763,8 +773,11 @@ function compressImageFile(file, auftrag, coords, accuracy){
   });
 }
 
-function triggerPhotoCapture(auftragId){
-  photoTargetAuftragId = auftragId;
+let photoTargetElementId = null;
+function triggerPhotoCapture(id, type, elementId){
+  photoTargetAuftragId = id;
+  photoTargetType = type || 'auftrag';
+  photoTargetElementId = elementId || 'photoArea';
   document.getElementById('photoInput').click();
 }
 
@@ -810,8 +823,9 @@ document.getElementById('photoInput').addEventListener('change', async function(
   e.target.value = '';
   if(!file || !photoTargetAuftragId) return;
   try{
-    const auftragId = photoTargetAuftragId;
-    const a = auftraege.find(x => x.id === auftragId);
+    const id = photoTargetAuftragId;
+    const type = photoTargetType;
+    const a = getPhotoRecord(id, type);
     showToast('Foto wird verarbeitet, Standort wird ermittelt…');
     const fresh = await getFreshGpsForPhoto();
     const coords = fresh ? { lat: fresh.lat, lon: fresh.lon } : (a ? a.koordinaten : null);
@@ -824,36 +838,37 @@ document.getElementById('photoInput').addEventListener('change', async function(
       if(!a.photos) a.photos = [];
       const kundencode = sanitizeFilename(a.kundencode || 'ohne-kundencode');
       const zaehler = sanitizeFilename(a.zaehler || 'ohne-zaehlernummer');
+      const zaehlerplatzId = sanitizeFilename(a.zaehlerplatzId || '');
       const datum = todayDe().split('.').join('-');
-      const filename = nextPhotoFilename(a, kundencode, zaehler, datum);
+      const filename = nextPhotoFilename(a, kundencode + (zaehlerplatzId ? '-' + zaehlerplatzId : ''), zaehler, datum);
       const saved = await savePhotoToFolderNamed(filename, blob);
       if(saved){
         a.photos.push({ filename, koordinaten: coords, genauigkeit: accuracy });
-        saveAuftraege();
+        savePhotoRecordOwner(type);
         showToast('Foto gespeichert: ' + filename + (accuracy ? ` (±${accuracy}m)` : ''));
       } else {
         showToast('Foto-Speicherung fehlgeschlagen, speichere im App-Speicher');
-        await kvSet('photo_' + auftragId, dataUrl);
+        await kvSet('photo_' + id, dataUrl);
       }
     } else {
       // No folder linked (typically mobile) — local storage only realistically
       // fits a single photo. Offer to share it out (e.g. to OneDrive) right away,
       // using the same filename scheme as the desktop file storage.
-      await kvSet('photo_' + auftragId, dataUrl);
+      await kvSet('photo_' + id, dataUrl);
       const kundencode = sanitizeFilename((a && a.kundencode) || 'ohne-kundencode');
       const zaehler = sanitizeFilename((a && a.zaehler) || 'ohne-zaehlernummer');
       const datum = todayDe().split('.').join('-');
       const shareFilename = `${kundencode}_${zaehler}_${datum}.jpg`;
       await sharePhotoBlob(blob, shareFilename);
     }
-    refreshPhotoArea(auftragId);
+    refreshPhotoArea(id, type, photoTargetElementId);
   }catch(err){
     showToast('Foto konnte nicht verarbeitet werden');
   }
 });
 
-async function getPhotoSrcList(auftragId){
-  const a = auftraege.find(x => x.id === auftragId);
+async function getPhotoSrcList(id, type){
+  const a = getPhotoRecord(id, type || 'auftrag');
   const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
   if(a && a.photos && a.photos.length && folderReady2){
     const results = await Promise.all(a.photos.map(async (p) => ({
@@ -862,37 +877,40 @@ async function getPhotoSrcList(auftragId){
     })));
     return results.filter(r => r.src);
   }
-  const dataUrl = await kvGet('photo_' + auftragId);
+  const dataUrl = await kvGet('photo_' + id);
   if(dataUrl) return [{ filename: null, koordinaten: a ? a.koordinaten : null, genauigkeit: null, src: dataUrl }];
   return [];
 }
 
-async function refreshPhotoArea(auftragId){
-  const area = document.getElementById('photoArea');
+async function refreshPhotoArea(id, type, elementId){
+  elementId = elementId || 'photoArea';
+  const area = document.getElementById(elementId);
   if(!area) return; // modal already closed
-  const photos = await getPhotoSrcList(auftragId);
-  area.innerHTML = photoAreaHtml(auftragId, photos);
+  const photos = await getPhotoSrcList(id, type);
+  area.innerHTML = photoAreaHtml(id, photos, type, elementId);
 }
 
-function photoAreaHtml(auftragId, photos){
+function photoAreaHtml(id, photos, type, elementId){
+  type = type || 'auftrag';
+  elementId = elementId || 'photoArea';
   const thumbs = photos.map((p, idx) => `
     <div style="flex:0 0 auto;width:110px">
       <div style="position:relative">
-        <img src="${p.src}" style="width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;display:block" onclick="openPhotoFull('${auftragId}', ${idx})">
-        <button class="icon-btn" onclick="deletePhoto('${auftragId}', ${p.filename ? `'${p.filename}'` : 'null'})" title="Löschen" style="position:absolute;top:4px;right:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗑</button>
+        <img src="${p.src}" style="width:110px;height:110px;object-fit:cover;border-radius:8px;cursor:pointer;display:block" onclick="openPhotoFull('${id}', ${idx}, '${type}')">
+        <button class="icon-btn" onclick="deletePhoto('${id}', ${p.filename ? `'${p.filename}'` : 'null'}, '${type}', '${elementId}')" title="Löschen" style="position:absolute;top:4px;right:4px;background:rgba(255,255,255,.9);padding:3px 6px">🗑</button>
       </div>
       ${p.koordinaten ? `<a href="#" onclick="navigateToCoords(${p.koordinaten.lat},${p.koordinaten.lon});return false" style="display:block;text-align:center;font-size:11px;color:var(--teal-deep);margin-top:4px;text-decoration:underline">${fmtCoords(p.koordinaten)}${p.genauigkeit ? ` (±${p.genauigkeit}m)` : ''}</a>` : ''}
     </div>`).join('');
   return `
     <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px">${thumbs}</div>
     <div class="settings-row">
-      <button class="btn small" onclick="triggerPhotoCapture('${auftragId}')">📷 ${photos.length ? 'Foto hinzufügen' : 'Foto aufnehmen'}</button>
+      <button class="btn small" onclick="triggerPhotoCapture('${id}', '${type}', '${elementId}')">📷 ${photos.length ? 'Foto hinzufügen' : 'Foto aufnehmen'}</button>
     </div>
     ${photos.length ? `<p class="hint" style="margin:6px 0 0">📍 Standort wird bei jedem Foto frisch gemessen und mit gespeichert (EXIF + Link unterm Bild)</p>` : ''}`;
 }
 
-async function openPhotoFull(auftragId, idx){
-  const photos = await getPhotoSrcList(auftragId);
+async function openPhotoFull(id, idx, type){
+  const photos = await getPhotoSrcList(id, type);
   const p = photos[idx];
   if(p && p.src){ window.open(p.src, '_blank'); }
 }
@@ -901,20 +919,21 @@ function navigateToCoords(lat, lon){
   window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving`, '_blank');
 }
 
-async function deletePhoto(auftragId, filename){
-  const a = auftraege.find(x => x.id === auftragId);
+async function deletePhoto(id, filename, type, elementId){
+  type = type || 'auftrag';
+  const a = getPhotoRecord(id, type);
   const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
   if(a && filename && folderReady2){
     await removePhotoFromFolder(filename);
     if(a.photos) a.photos = a.photos.filter(p => p.filename !== filename);
-    saveAuftraege();
+    savePhotoRecordOwner(type);
   }
   if(!filename){
     // legacy/local-storage photo
-    await kvSet('photo_' + auftragId, '');
+    await kvSet('photo_' + id, '');
   }
   showToast('Foto gelöscht');
-  refreshPhotoArea(auftragId);
+  refreshPhotoArea(id, type, elementId);
 }
 
 async function loadAll(){
@@ -2516,6 +2535,14 @@ function renderEinstellungen(){
         <button class="btn" onclick="addCustomField()">+ Feld hinzufügen</button>
       </div>
       <p class="hint">Eigene Felder erscheinen als zusätzliche, frei editierbare Spalte in der Auftragstabelle und im Bearbeiten-Fenster.</p>
+    </div>
+
+    <div class="settings-section">
+      <h4>Mein Name</h4>
+      <div class="settings-row">
+        <input type="text" id="userNameInput" value="${escapeHtml(settings.userName||'')}" placeholder="z.B. Rico Grutze" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:6px" onchange="saveUserName(this.value)">
+      </div>
+      <p class="hint">Erscheint als Ersteller-Angabe zusammen mit dem Datum auf neuen Fotos.</p>
     </div>
 
     <div class="settings-section">
@@ -4142,7 +4169,7 @@ function renderAdressbuch(){
   }
   const q = adrSearch.trim().toLowerCase();
   const filtered = !q ? adressbuch : adressbuch.filter(e => {
-    const haystack = [e.adresse, e.kundenname, e.zaehlerplatzId, e.kundencode].map(v=>(v||'').toString().toLowerCase()).join(' ');
+    const haystack = [e.adresse, e.kundenname, e.zaehlerplatzId, e.kundencode, e.zaehler, e.telefonnummer, e.standort].map(v=>(v||'').toString().toLowerCase()).join(' ');
     return haystack.includes(q);
   });
 
@@ -4219,10 +4246,20 @@ function renderAdressbuch(){
             <textarea class="cell-input" id="adr_notiz_${e.id}" rows="2" onchange="updateAdrField('${e.id}','notiz', this.value)">${escapeHtml(e.notiz||'')}</textarea>
             ${fieldUpdateHint(e,'notiz')}
           </div>
+          <div class="field">
+            <label>Fotos</label>
+            <div id="photoArea_adr_${e.id}">Lädt…</div>
+          </div>
           <p class="hint">Messlokation: <span class="muted">${escapeHtml(e.kundencode || '–')}</span></p>
         </div>` : ''}
     </div>`;
   }).join('');
+
+  setTimeout(() => {
+    filtered.forEach(e => {
+      if(adrDetailsOpen[e.id]) refreshPhotoArea(e.id, 'adressbuch', 'photoArea_adr_' + e.id);
+    });
+  }, 0);
 
   return searchBar + toggleHtml + `<div class="adr-card-list">${cards}</div>`;
 }
@@ -4727,6 +4764,11 @@ function icsEscape(s){
   if(settings.remindersEnabled) startReminderChecks();
 })();
 
+function saveUserName(val){
+  settings.userName = val.trim();
+  saveSettings();
+  showToast(settings.userName ? 'Name gespeichert: ' + settings.userName : 'Name entfernt');
+}
 function saveGpsAccuracyThreshold(val){
   const n = parseInt(val, 10);
   settings.gpsAccuracyThreshold = (n && n > 0) ? n : 10;
