@@ -781,21 +781,28 @@ function triggerPhotoCapture(id, type, elementId){
   document.getElementById('photoInput').click();
 }
 
+function downloadPhotoBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 async function sharePhotoBlob(blob, filename){
+  // Automatic, no-tap save into the device's own Downloads folder — this
+  // always works, no share-target picker needed.
+  downloadPhotoBlob(blob, filename);
+  showToast('Foto im Download-Ordner gespeichert: ' + filename);
+
+  // Also offer sharing (e.g. straight to OneDrive) as an optional extra step.
   const file = new File([blob], filename, { type: 'image/jpeg' });
   if(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
-    try{
-      await navigator.share({ files: [file], title: filename });
-      showToast('Foto geteilt — z.B. nach OneDrive speichern');
-      return;
-    }catch(e){
-      if(e && e.name === 'AbortError'){
-        showToast('Foto im App-Speicher gesichert (Teilen abgebrochen)');
-        return;
-      }
-    }
+    try{ await navigator.share({ files: [file], title: filename }); }
+    catch(e){ /* user closed the share sheet — the download already happened, that's fine */ }
   }
-  showToast('Foto im App-Speicher gesichert (Teilen auf diesem Gerät nicht verfügbar)');
 }
 
 function nextPhotoFilename(a, kundencode, zaehler, datum){
@@ -834,6 +841,16 @@ document.getElementById('photoInput').addEventListener('change', async function(
     const { blob, dataUrl } = await compressImageFile(file, a, coords, accuracy);
     const folderReady = photoFolderHandle && !photoFolderNeedsPermission;
 
+    if(FS_SUPPORTED && photoFolderHandle && photoFolderNeedsPermission){
+      showModal(`
+        <div class="modal-head"><h3>⚠️ Fotoordner nicht verbunden</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+        <div class="modal-body">
+          <p class="hint" style="margin-top:0">Dieses Foto landet gerade im begrenzten App-Speicher, weil die Verbindung zum Fotoordner erneuert werden muss.</p>
+        </div>
+        <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Später</button><button class="btn primary" onclick="closeModal();reconnectPhotoFolder()">🔄 Jetzt verbinden</button></div>
+      `);
+    }
+
     if(folderReady && a){
       if(!a.photos) a.photos = [];
       const kundencode = sanitizeFilename(a.kundencode || 'ohne-kundencode');
@@ -845,9 +862,13 @@ document.getElementById('photoInput').addEventListener('change', async function(
       if(saved){
         a.photos.push({ filename, koordinaten: coords, genauigkeit: accuracy });
         savePhotoRecordOwner(type);
-        showToast('Foto gespeichert: ' + filename + (accuracy ? ` (±${accuracy}m)` : ''));
+        showToast('✅ Im Fotoordner gespeichert: ' + filename + (accuracy ? ` (±${accuracy}m)` : ''));
       } else {
-        showToast('Foto-Speicherung fehlgeschlagen, speichere im App-Speicher');
+        showModal(`
+          <div class="modal-head"><h3>⚠️ Speichern im Fotoordner fehlgeschlagen</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+          <div class="modal-body"><p class="hint" style="margin-top:0">Das Foto liegt vorerst im begrenzten App-Speicher. Prüfe, ob der verknüpfte Ordner noch existiert/erreichbar ist.</p></div>
+          <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Verstanden</button></div>
+        `);
         await kvSet('photo_' + id, dataUrl);
       }
     } else {
@@ -4223,6 +4244,7 @@ function renderAdressbuch(){
           : `<button class="icon-btn" onclick="searchPhoneForAdr('${e.id}')" title="Im Web nach Telefonnummer suchen">🔍</button>`}
         <button class="icon-btn" onclick="toggleAdrDetails('${e.id}')" title="Details">${detailsOpen ? '▲' : '▼'}</button>
         <button class="icon-btn" onclick="openAdrHistory('${e.id}')" title="Verlauf">🕒 ${e.history.length}</button>
+        <button class="icon-btn" onclick="openAdrUebersicht('${e.id}')" title="Übersichtsblatt (alle Daten + Fotos)">📄</button>
       </div>
       ${detailsOpen ? `
         <div class="adr-card-details">
@@ -4612,6 +4634,62 @@ function openAuftragHistory(id){
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Schließen</button></div>
   `);
 }
+async function openAdrUebersicht(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  showModal(`<div class="modal-head"><h3>Übersichtsblatt</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Lädt Fotos…</p></div>`);
+
+  const photos = await getPhotoSrcList(id, 'adressbuch');
+
+  const row = (label, val) => val ? `<div style="margin-bottom:8px"><span style="font-weight:600;font-size:12px;color:var(--ink-soft)">${label}</span><br>${escapeHtml(val)}</div>` : '';
+
+  const photoGrid = photos.length ? `
+    <h4 style="margin:18px 0 10px;font-family:var(--font-display)">Fotos (${photos.length})</h4>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">
+      ${photos.map(p => `
+        <div>
+          <img src="${p.src}" style="width:100%;border-radius:6px;display:block">
+          ${p.koordinaten ? `<div style="font-size:10px;color:var(--ink-soft);margin-top:3px">${fmtCoords(p.koordinaten)}${p.genauigkeit?` (±${p.genauigkeit}m)`:''}</div>` : ''}
+        </div>`).join('')}
+    </div>` : `<p class="hint">Keine Fotos vorhanden.</p>`;
+
+  showModal(`
+    <div class="modal-head"><h3>📄 Übersichtsblatt</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body" id="uebersichtPrintArea">
+      <h2 style="margin:0 0 4px;font-family:var(--font-display)">${escapeHtml(e.kundenname || e.adresse || 'Ohne Namen')}</h2>
+      <p class="hint" style="margin:0 0 16px">Messlokation: ${escapeHtml(e.kundencode || '–')}</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px">
+        ${row('Adresse', e.adresse)}
+        ${row('Standort', e.standort)}
+        ${row('Zähler', e.zaehler)}
+        ${row('Bauform', e.bauform)}
+        ${row('Zählerplatz-ID', e.zaehlerplatzId)}
+        ${row('Telefon', e.telefonnummer)}
+        ${row('E-Mail', e.email)}
+        ${row('Koordinaten', fmtCoords(e.koordinaten))}
+      </div>
+      ${e.notiz ? `<div style="margin-top:8px"><span style="font-weight:600;font-size:12px;color:var(--ink-soft)">Notiz</span><br>${escapeHtml(e.notiz)}</div>` : ''}
+      ${photoGrid}
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeModal()">Schließen</button>
+      <button class="btn primary" onclick="printUebersicht()">🖨️ Drucken / Als PDF</button>
+    </div>
+  `);
+}
+function printUebersicht(){
+  const content = document.getElementById('uebersichtPrintArea').innerHTML;
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>Übersichtsblatt</title><style>
+    body{ font-family:sans-serif; padding:24px; color:#1a2420; }
+    img{ max-width:100%; }
+  </style></head><body>${content}</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
 function openAdrHistory(id){
   const e = adressbuch.find(x => x.id === id);
   if(!e) return;
