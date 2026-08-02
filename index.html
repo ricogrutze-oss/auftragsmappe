@@ -4180,7 +4180,7 @@ function initAdrMap(entries){
       ${e.telefonnummer ? `<div class="muted">${escapeHtml(e.telefonnummer)}</div>` : ''}
       <div style="margin-top:8px;display:flex;gap:6px">
         <button class="btn small" onclick="navigateToAdr('${e.id}')" style="flex:1">🧭 Navigation</button>
-        <button class="btn small primary" onclick="jumpToAdressbuchEntry('${e.id}')" style="flex:1">✏️ Öffnen</button>
+        <button class="btn small primary" onclick="openAnlageDetailModal('${e.id}')" style="flex:1">✏️ Öffnen</button>
       </div>
     `);
     cluster.addLayer(marker);
@@ -4210,6 +4210,74 @@ function jumpToAdressbuchEntry(id){
     const el = document.getElementById('adrSearchInput');
     if(el) el.scrollIntoView({ behavior:'smooth', block:'start' });
   }, 50);
+}
+
+async function openAnlageDetailModal(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  showModal(`<div class="modal-head"><h3>Anlage</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Lädt…</p></div>`);
+  renderAnlageDetailModal(id);
+  refreshPhotoArea(id, 'adressbuch', 'photoArea_modal_' + id);
+}
+function renderAnlageDetailModal(id){
+  const e = adressbuch.find(x => x.id === id);
+  if(!e) return;
+  showModal(`
+    <div class="modal-head">
+      <h3>${escapeHtml(e.kundenname || e.adresse || 'Anlage')}</h3>
+      <button class="close-x" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint" style="margin-top:0">Messlokation: ${escapeHtml(e.kundencode || '–')}</p>
+      <div class="field"><label>Kundenname</label><input class="cell-input" type="text" value="${escapeHtml(e.kundenname||'')}" onchange="updateAdrField('${e.id}','kundenname', this.value)"></div>
+      <div class="field"><label>Adresse</label><input class="cell-input" type="text" value="${escapeHtml(e.adresse||'')}" onchange="updateAdrField('${e.id}','adresse', this.value)"></div>
+      <div class="field-row">
+        <div class="field"><label>Standort</label><input class="cell-input" type="text" value="${escapeHtml(e.standort||'')}" list="standortSuggestions" onchange="updateAdrField('${e.id}','standort', this.value)"></div>
+        <div class="field"><label>Zählerplatz-ID</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehlerplatzId||'')}" style="font-family:var(--font-mono);font-size:12px" onchange="updateAdrField('${e.id}','zaehlerplatzId', this.value)"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Zähler</label><input class="cell-input" type="text" value="${escapeHtml(e.zaehler||'')}" onchange="updateAdrField('${e.id}','zaehler', this.value)"></div>
+        <div class="field"><label>Bauform</label><input class="cell-input" type="text" value="${escapeHtml(e.bauform||'')}" onchange="updateAdrField('${e.id}','bauform', this.value)"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Telefon</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="cell-input" type="text" value="${escapeHtml(e.telefonnummer||'')}" style="flex:1" onchange="updateAdrField('${e.id}','telefonnummer', this.value)">
+            ${e.telefonnummer ? phoneButtonsHtml(e.telefonnummer) : `<button class="btn small" onclick="searchPhoneForAdr('${e.id}')">🔍</button>`}
+          </div>
+        </div>
+        <div class="field"><label>E-Mail</label><input class="cell-input" type="text" value="${escapeHtml(e.email||'')}" onchange="updateAdrField('${e.id}','email', this.value)"></div>
+      </div>
+      <div class="field">
+        <label>Koordinaten</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input class="cell-input" type="text" value="${escapeHtml(fmtCoords(e.koordinaten))}" placeholder="52.130, 11.630" style="flex:1;font-family:var(--font-mono);font-size:12px" onchange="updateAdrCoordsField('${e.id}', this.value)">
+          <button class="icon-btn" onclick="captureGpsForAdr('${e.id}')" title="Aktuellen Standort übernehmen">📍</button>
+          <button class="btn small" onclick="navigateToAdr('${e.id}')">🧭</button>
+        </div>
+        ${e.koordinatenAktualisiertAm ? `<p class="hint" style="margin:4px 0 0">Aktualisiert am ${escapeHtml(e.koordinatenAktualisiertAm)}${e.koordinatenGenauigkeit ? ` · Genauigkeit ±${e.koordinatenGenauigkeit}m` : ''}${e.koordinatenQuelle ? ` · ${koordinatenQuelleDot(e.koordinatenQuelle, true)}` : ''}</p>` : ''}
+      </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;justify-content:space-between">
+          Notiz
+          <button type="button" class="icon-btn" onclick="startDictation('modal_notiz_${e.id}')" title="Diktieren">🎙️</button>
+        </label>
+        <textarea class="cell-input" id="modal_notiz_${e.id}" rows="2" onchange="updateAdrField('${e.id}','notiz', this.value)">${escapeHtml(e.notiz||'')}</textarea>
+      </div>
+      <div class="field">
+        <label>Fotos</label>
+        <div id="photoArea_modal_${e.id}">Lädt…</div>
+      </div>
+      <div class="settings-row" style="margin-top:6px">
+        <button class="btn small" onclick="openAdrHistory('${e.id}')">🕒 Verlauf (${e.history.length})</button>
+        <button class="btn small" onclick="openAdrUebersicht('${e.id}')">📄 Übersichtsblatt</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn primary" onclick="closeModal()">Fertig</button>
+    </div>
+  `);
 }
 
 function toggleAdrDetails(id){
@@ -4286,6 +4354,7 @@ function renderAdressbuch(){
         <button class="icon-btn" onclick="toggleAdrDetails('${e.id}')" title="Details">${detailsOpen ? '▲' : '▼'}</button>
         <button class="icon-btn" onclick="openAdrHistory('${e.id}')" title="Verlauf">🕒 ${e.history.length}</button>
         <button class="icon-btn" onclick="openAdrUebersicht('${e.id}')" title="Übersichtsblatt (alle Daten + Fotos)">📄</button>
+        <button class="icon-btn" onclick="openAnlageDetailModal('${e.id}')" title="In eigenem Fenster öffnen">🔍</button>
       </div>
       ${detailsOpen ? `
         <div class="adr-card-details">
