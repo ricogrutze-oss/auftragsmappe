@@ -805,12 +805,12 @@ async function sharePhotoBlob(blob, filename){
   }
 }
 
-function nextPhotoFilename(a, kundencode, zaehler, datum){
-  const base = `${kundencode}_${zaehler}_${datum}`;
-  const existing = (a.photos || []).map(p => p.filename.replace(/\.jpg$/,''));
-  if(!existing.includes(base)) return base + '.jpg';
+function nextPhotoFilename(a, zaehlerLabel, datumLabel){
+  const base = zaehlerLabel;
+  const sameDayFiles = (a.photos || []).filter(p => p.datumLabel === datumLabel).map(p => p.filename.replace(/\.jpg$/,''));
+  if(!sameDayFiles.includes(base)) return base + '.jpg';
   let n = 2;
-  while(existing.includes(`${base}_${n}`)) n++;
+  while(sameDayFiles.includes(`${base}_${n}`)) n++;
   return `${base}_${n}.jpg`;
 }
 
@@ -853,14 +853,12 @@ document.getElementById('photoInput').addEventListener('change', async function(
 
     if(folderReady && a){
       if(!a.photos) a.photos = [];
-      const kundencode = sanitizeFilename(a.kundencode || 'ohne-kundencode');
-      const zaehler = sanitizeFilename(a.zaehler || 'ohne-zaehlernummer');
-      const zaehlerplatzId = sanitizeFilename(a.zaehlerplatzId || '');
+      const zaehlerLabel = sanitizeFilename(a.zaehler || 'ohne-zaehlernummer');
       const datum = todayDe().split('.').join('-');
-      const filename = nextPhotoFilename(a, kundencode + (zaehlerplatzId ? '-' + zaehlerplatzId : ''), zaehler, datum);
-      const saved = await savePhotoToFolderNamed(filename, blob);
+      const filename = nextPhotoFilename(a, zaehlerLabel, datum);
+      const saved = await savePhotoToFolderNamed(filename, blob, a, datum);
       if(saved){
-        a.photos.push({ filename, koordinaten: coords, genauigkeit: accuracy });
+        a.photos.push({ filename: saved.filename, ortLabel: saved.ortLabel, strasseLabel: saved.strasseLabel, datumLabel: saved.datumLabel, koordinaten: coords, genauigkeit: accuracy });
         savePhotoRecordOwner(type);
         showToast('✅ Im Fotoordner gespeichert: ' + filename + (accuracy ? ` (±${accuracy}m)` : ''));
       } else {
@@ -894,7 +892,7 @@ async function getPhotoSrcList(id, type){
   if(a && a.photos && a.photos.length && folderReady2){
     const results = await Promise.all(a.photos.map(async (p) => ({
       filename: p.filename, koordinaten: p.koordinaten, genauigkeit: p.genauigkeit,
-      src: await readPhotoFromFolder(p.filename)
+      src: await readPhotoFromFolder(p)
     })));
     return results.filter(r => r.src);
   }
@@ -945,7 +943,8 @@ async function deletePhoto(id, filename, type, elementId){
   const a = getPhotoRecord(id, type);
   const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
   if(a && filename && folderReady2){
-    await removePhotoFromFolder(filename);
+    const entry = (a.photos || []).find(p => p.filename === filename);
+    if(entry) await removePhotoFromFolder(entry);
     if(a.photos) a.photos = a.photos.filter(p => p.filename !== filename);
     savePhotoRecordOwner(type);
   }
@@ -1049,102 +1048,52 @@ async function idbSetHandle(handle, key){
   }catch(e){}
 }
 
-async function chooseFolderNew(){
+async function chooseMainFolder(){
   if(!FS_SUPPORTED){
-    showToast('Datei-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
+    showToast('Ordner-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
     return;
   }
   try{
-    const handle = await window.showSaveFilePicker({
-      suggestedName: 'auftragsmappe-daten.json',
-      types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }]
-    });
-    folderHandle = handle;
-    folderNeedsPermission = false;
-    await idbSetHandle(handle);
-    await saveToFolder();
-    render();
-    showToast('Neue Datei angelegt und verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
-  }catch(e){ /* cancelled */ }
-}
-async function chooseFolderExisting(){
-  if(!FS_SUPPORTED){
-    showToast('Datei-Verknüpfung wird nur in Chrome/Edge auf dem Desktop unterstützt');
-    return;
-  }
-  try{
-    const [handle] = await window.showOpenFilePicker({
-      types: [{ description: 'Auftragsmappe-Datensicherung', accept: { 'application/json': ['.json'] } }],
-      excludeAcceptAllOption: false,
-      multiple: false
-    });
-    folderHandle = handle;
-    folderNeedsPermission = false;
-    await idbSetHandle(handle);
+    const handle = await window.showDirectoryPicker();
+    photoFolderHandle = handle;
+    photoFolderNeedsPermission = false;
+    await idbSetHandle(handle, 'photoFolder');
     await loadFromFolder(true);
     await saveToFolder();
     render();
-    showToast('Datei verknüpft — Daten werden ab jetzt automatisch dorthin gespeichert');
+    showToast('Hauptordner verknüpft — Sicherungsdatei und Fotos werden ab jetzt automatisch dort gespeichert');
   }catch(e){ /* cancelled */ }
 }
 function updateReconnectBanner(){
   const el = document.getElementById('reconnectBanner');
   if(!el) return;
-  if(folderHandle && folderNeedsPermission){
+  if(photoFolderHandle && photoFolderNeedsPermission){
     el.style.display = '';
     el.innerHTML = `<div class="reconnect-banner">
-      ⚠️ Verbindung zur Sicherungsdatei muss erneuert werden — aktuelle Daten wurden noch nicht geladen!
-      <button class="btn small" onclick="reconnectFolder()">🔄 Jetzt verbinden</button>
-    </div>`;
-  } else if(photoFolderHandle && photoFolderNeedsPermission){
-    el.style.display = '';
-    el.innerHTML = `<div class="reconnect-banner">
-      ⚠️ Verbindung zum Fotoordner muss erneuert werden — neue Fotos werden sonst nur lokal gespeichert!
-      <button class="btn small" onclick="reconnectPhotoFolder()">🔄 Jetzt verbinden</button>
+      ⚠️ Verbindung zum Hauptordner muss erneuert werden — aktuelle Daten/Fotos wurden noch nicht geladen!
+      <button class="btn small" onclick="reconnectMainFolder()">🔄 Jetzt verbinden</button>
     </div>`;
   } else {
     el.style.display = 'none';
     el.innerHTML = '';
   }
 }
-async function reconnectFolder(){
-  if(!folderHandle) return;
-  try{
-    const perm = await folderHandle.requestPermission({ mode:'readwrite' });
-    if(perm === 'granted'){
-      folderNeedsPermission = false;
-      await loadFromFolder(true);
-      render();
-      showToast('Datei wieder verbunden');
-    } else {
-      showToast('Zugriff wurde nicht erlaubt');
-    }
-  }catch(e){ showToast('Verbindung zur Datei fehlgeschlagen'); }
-}
-async function choosePhotoFolder(){
-  if(!FS_SUPPORTED){ showToast('Nur in Chrome/Edge auf dem Desktop verfügbar'); return; }
-  try{
-    const handle = await window.showDirectoryPicker();
-    photoFolderHandle = handle;
-    photoFolderNeedsPermission = false;
-    await idbSetHandle(handle, 'photoFolder');
-    render();
-    showToast('Fotoordner verknüpft — neue Fotos werden ab jetzt automatisch dort gespeichert');
-  }catch(e){ /* cancelled */ }
-}
-async function reconnectPhotoFolder(){
+async function reconnectMainFolder(){
   if(!photoFolderHandle) return;
   try{
     const perm = await photoFolderHandle.requestPermission({ mode:'readwrite' });
     if(perm === 'granted'){
       photoFolderNeedsPermission = false;
+      await loadFromFolder(true);
       render();
-      showToast('Fotoordner wieder verbunden');
+      showToast('Hauptordner wieder verbunden');
     } else {
       showToast('Zugriff wurde nicht erlaubt');
     }
-  }catch(e){ showToast('Verbindung fehlgeschlagen'); }
+  }catch(e){ showToast('Verbindung zum Ordner fehlgeschlagen'); }
 }
+async function choosePhotoFolder(){ return chooseMainFolder(); }
+async function reconnectPhotoFolder(){ return reconnectMainFolder(); }
 async function tryRestorePhotoFolder(){
   if(!FS_SUPPORTED) return;
   const handle = await idbGetHandle('photoFolder');
@@ -1158,56 +1107,92 @@ async function tryRestorePhotoFolder(){
 function sanitizeFilename(s){
   return (s||'').toString().trim().replace(/[\\/:*?"<>|]/g,'_') || 'unbenannt';
 }
-async function savePhotoToFolderNamed(filename, blob){
+function parseOrtUndStrasse(adresse){
+  // Erwartetes Format: "Ortsteil, Straße Hausnummer, Ort" (wie beim Import
+  // zusammengesetzt) — robust auch bei 1-2 Teilen statt 3.
+  const parts = (adresse||'').split(',').map(p => p.trim()).filter(Boolean);
+  if(parts.length >= 3) return { strasse: parts[1], ort: parts[parts.length-1] };
+  if(parts.length === 2) return { strasse: parts[0], ort: parts[1] };
+  if(parts.length === 1) return { strasse: parts[0], ort: 'Unbekannt' };
+  return { strasse: 'Unbekannt', ort: 'Unbekannt' };
+}
+async function getNestedPhotoFolder(a, datumLabel){
+  if(!photoFolderHandle) return null;
+  // Cache the Ort/Straßen-Ordnername on the canonical Adressbuch-Eintrag
+  // (nicht pro Auftrag) — Zählerplatz-ID entscheidet, einmal festgelegt bleibt
+  // der Ordnername für immer gleich, auch wenn spätere Importe die Straße
+  // anders schreiben. Verhindert doppelte Ordner für dieselbe Anlage.
+  const canonical = a.adrEntryId ? adressbuch.find(e => e.id === a.adrEntryId) : a;
+  const target = canonical || a;
+  let ortLabel = target.photoFolderOrtLabel;
+  let strasseLabel = target.photoFolderStrasseLabel;
+  if(!ortLabel || !strasseLabel){
+    const { strasse, ort } = parseOrtUndStrasse(a.adresse || target.adresse);
+    ortLabel = sanitizeFilename(ort);
+    const zpid = a.zaehlerplatzId || target.zaehlerplatzId;
+    strasseLabel = sanitizeFilename(zpid ? `${strasse} (${zpid})` : strasse);
+    target.photoFolderOrtLabel = ortLabel;
+    target.photoFolderStrasseLabel = strasseLabel;
+    if(canonical) saveAdressbuch(); // sofort merken, unabhängig davon ob der Auftrag gleich mitgespeichert wird
+  }
+  const ortFolder = await photoFolderHandle.getDirectoryHandle(ortLabel, { create:true });
+  const strasseFolder = await ortFolder.getDirectoryHandle(strasseLabel, { create:true });
+  const datumFolder = await strasseFolder.getDirectoryHandle(datumLabel, { create:true });
+  return { folder: datumFolder, ortLabel, strasseLabel, datumLabel };
+}
+async function savePhotoToFolderNamed(filename, blob, a, datumLabel){
   if(!photoFolderHandle || photoFolderNeedsPermission) return false;
   try{
-    const fileHandle = await photoFolderHandle.getFileHandle(filename, { create:true });
+    const nested = a ? await getNestedPhotoFolder(a, datumLabel) : null;
+    const targetFolder = nested ? nested.folder : photoFolderHandle;
+    const fileHandle = await targetFolder.getFileHandle(filename, { create:true });
     const writable = await fileHandle.createWritable();
     await writable.write(blob);
     await writable.close();
-    return filename;
+    return nested ? { filename, ortLabel: nested.ortLabel, strasseLabel: nested.strasseLabel, datumLabel: nested.datumLabel } : { filename };
   }catch(e){ console.error('savePhotoToFolderNamed', e); return false; }
 }
 async function savePhotoToFolder(auftragOrEntry, blob){
   if(!photoFolderHandle || photoFolderNeedsPermission) return false;
-  const kundencode = sanitizeFilename(auftragOrEntry.kundencode || 'ohne-kundencode');
   const zaehler = sanitizeFilename(auftragOrEntry.zaehler || 'ohne-zaehlernummer');
   const datum = todayDe().split('.').join('-'); // TT-MM-JJJJ, dateisicher
-  const filename = `${kundencode}_${zaehler}_${datum}.jpg`;
-  return await savePhotoToFolderNamed(filename, blob);
+  const filename = `${zaehler}.jpg`;
+  return await savePhotoToFolderNamed(filename, blob, auftragOrEntry, datum);
 }
-async function readPhotoFromFolder(filename){
-  if(!photoFolderHandle || photoFolderNeedsPermission || !filename) return null;
+async function resolvePhotoFolderPath(photoEntry){
+  if(!photoFolderHandle) return null;
+  if(!photoEntry.ortLabel) return photoFolderHandle; // flat/legacy photo
   try{
-    const fileHandle = await photoFolderHandle.getFileHandle(filename);
+    const ortFolder = await photoFolderHandle.getDirectoryHandle(photoEntry.ortLabel);
+    const strasseFolder = await ortFolder.getDirectoryHandle(photoEntry.strasseLabel);
+    if(photoEntry.datumLabel) return await strasseFolder.getDirectoryHandle(photoEntry.datumLabel);
+    return strasseFolder; // older entries saved before the Datum level existed
+  }catch(e){ return null; }
+}
+async function readPhotoFromFolder(photoEntry){
+  if(!photoFolderHandle || photoFolderNeedsPermission || !photoEntry) return null;
+  try{
+    const folder = await resolvePhotoFolderPath(photoEntry);
+    if(!folder) return null;
+    const fileHandle = await folder.getFileHandle(photoEntry.filename);
     const file = await fileHandle.getFile();
     return URL.createObjectURL(file);
   }catch(e){ return null; /* Datei fehlt/wurde umbenannt — kein harter Fehler */ }
 }
-async function removePhotoFromFolder(filename){
-  if(!photoFolderHandle || photoFolderNeedsPermission || !filename) return;
-  try{ await photoFolderHandle.removeEntry(filename); }catch(e){ /* schon weg, ignorieren */ }
+async function removePhotoFromFolder(photoEntry){
+  if(!photoFolderHandle || photoFolderNeedsPermission || !photoEntry) return;
+  try{
+    const folder = await resolvePhotoFolderPath(photoEntry);
+    if(folder) await folder.removeEntry(photoEntry.filename);
+  }catch(e){ /* schon weg, ignorieren */ }
 }
 
-async function tryRestoreFolder(){
-  if(!FS_SUPPORTED) return;
-  const handle = await idbGetHandle();
-  if(!handle) return;
-  folderHandle = handle;
-  try{
-    const perm = await handle.queryPermission({ mode:'readwrite' });
-    if(perm === 'granted'){
-      folderNeedsPermission = false;
-      await loadFromFolder(true);
-    } else {
-      folderNeedsPermission = true; // needs a click (user gesture) to reconnect
-    }
-  }catch(e){ folderNeedsPermission = true; }
-}
+async function tryRestoreFolder(){ return tryRestorePhotoFolder(); }
 async function loadFromFolder(silent){
-  if(!folderHandle) return;
+  if(!photoFolderHandle) return;
   try{
-    const file = await folderHandle.getFile();
+    const fileHandle = await photoFolderHandle.getFileHandle('auftragsmappe-daten.json', { create:true });
+    const file = await fileHandle.getFile();
     const text = await file.text();
     if(!text || !text.trim()) return;
     const data = JSON.parse(text);
@@ -1217,17 +1202,18 @@ async function loadFromFolder(silent){
   }catch(e){ console.error('loadFromFolder', e); }
 }
 async function saveToFolder(){
-  if(!folderHandle) return;
+  if(!photoFolderHandle || photoFolderNeedsPermission) return;
   try{
     const payload = { kind:'auftragsmappe-sicherung', version:1, exportedAt: nowIso(), auftraege, adressbuch, settings, columnMapping };
-    const writable = await folderHandle.createWritable();
+    const fileHandle = await photoFolderHandle.getFileHandle('auftragsmappe-daten.json', { create:true });
+    const writable = await fileHandle.createWritable();
     await writable.write(JSON.stringify(payload, null, 2));
     await writable.close();
     settings.folderLastSync = nowIso();
   }catch(e){ console.error('saveToFolder', e); }
 }
 function scheduleFolderSync(){
-  if(!folderHandle || folderNeedsPermission) return;
+  if(!photoFolderHandle || photoFolderNeedsPermission) return;
   clearTimeout(folderSyncTimer);
   folderSyncTimer = setTimeout(saveToFolder, 1200);
 }
@@ -2241,7 +2227,7 @@ function render(){
   document.getElementById('tabCountAdr').textContent = adressbuch.length;
   const backupWarnBadge = document.getElementById('tabWarnBackup');
   if(backupWarnBadge){
-    const isFolderLinked = folderHandle && !folderNeedsPermission;
+    const isFolderLinked = photoFolderHandle && !photoFolderNeedsPermission;
     const days = daysSinceLastBackup();
     const stale = !isFolderLinked && (days === null || days >= 14);
     backupWarnBadge.style.display = stale ? '' : 'none';
@@ -2496,7 +2482,7 @@ function daysSinceLastBackup(){
 }
 function backupStalenessWarningHtml(){
   // Only nudge if there's no auto-synced folder linked — that case is already handled automatically.
-  if(folderHandle && !folderNeedsPermission) return '';
+  if(photoFolderHandle && !photoFolderNeedsPermission) return '';
   const days = daysSinceLastBackup();
   if(days === null){
     return `<p class="hint" style="color:var(--red)">⚠️ Noch nie gesichert. Bei einer über Jahre wachsenden Liste lohnt sich eine regelmäßige Sicherung außerhalb des Geräts.</p>`;
@@ -2596,47 +2582,23 @@ function renderEinstellungen(){
     </div>
 
     <div class="settings-section">
-      <h4>Eigene Sicherungsdatei (PC, Chrome/Edge)</h4>
+      <h4>Hauptordner (PC, Chrome/Edge)</h4>
       <div class="settings-row">
-        ${folderHandle && !folderNeedsPermission
-          ? `<button class="btn" onclick="chooseFolderExisting()">📂 Andere bestehende Datei wählen</button>
-             <button class="btn" onclick="chooseFolderNew()">📄 Stattdessen neue Datei anlegen</button>`
-          : folderNeedsPermission
-            ? `<button class="btn primary" onclick="reconnectFolder()">🔄 Datei wieder verbinden</button>`
-            : `<button class="btn primary" onclick="chooseFolderNew()" ${FS_SUPPORTED ? '' : 'disabled'}>📄 Neue Datei anlegen</button>
-               <button class="btn" onclick="chooseFolderExisting()" ${FS_SUPPORTED ? '' : 'disabled'}>📂 Bestehende Datei wählen</button>`
+        ${photoFolderHandle && !photoFolderNeedsPermission
+          ? `<button class="btn" onclick="chooseMainFolder()">📁 Anderen Ordner wählen</button>`
+          : photoFolderNeedsPermission
+            ? `<button class="btn primary" onclick="reconnectMainFolder()">🔄 Ordner wieder verbinden</button>`
+            : `<button class="btn primary" onclick="chooseMainFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📁 Hauptordner verknüpfen</button>`
         }
       </div>
       <p class="hint">
         ${!FS_SUPPORTED
           ? 'Auf diesem Gerät/Browser nicht verfügbar (nur Desktop Chrome/Edge). Bitte weiterhin Sicherung exportieren/importieren nutzen.'
-          : folderHandle && !folderNeedsPermission
-            ? 'Verknüpft — Änderungen werden automatisch in diese Datei geschrieben. Wähle dafür eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, dann landen die Daten zentral.' + (settings.folderLastSync ? ' Zuletzt gespeichert: ' + fmtTs(settings.folderLastSync) : '')
-            : folderNeedsPermission
-              ? 'Datei war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
-              : 'Wähle (oder erstelle) eine Datei in deinem OneDrive-/SharePoint-synchronisierten Ordner, z.B. "auftragsmappe-daten.json". Die App liest und schreibt danach automatisch dort hinein — kein manueller Export mehr nötig auf diesem Gerät.'
-        }
-      </p>
-    </div>
-
-    <div class="settings-section">
-      <h4>Fotoordner (PC, Chrome/Edge)</h4>
-      <div class="settings-row">
-        ${photoFolderHandle && !photoFolderNeedsPermission
-          ? `<button class="btn" onclick="choosePhotoFolder()">📁 Anderen Ordner wählen</button>`
-          : photoFolderNeedsPermission
-            ? `<button class="btn primary" onclick="reconnectPhotoFolder()">🔄 Ordner wieder verbinden</button>`
-            : `<button class="btn primary" onclick="choosePhotoFolder()" ${FS_SUPPORTED ? '' : 'disabled'}>📁 Fotoordner verknüpfen</button>`
-        }
-      </div>
-      <p class="hint">
-        ${!FS_SUPPORTED
-          ? 'Auf diesem Gerät/Browser nicht verfügbar (nur Desktop Chrome/Edge).'
           : photoFolderHandle && !photoFolderNeedsPermission
-            ? 'Verknüpft — einmal ausgewählt, merkt sich die App das. Jedes neue Foto wird automatisch als eigene Bilddatei in diesem Ordner gespeichert (Name: Messlokation_Zählernummer_Datum.jpg), ganz normal im Explorer/OneDrive anschaubar. Jeder Besuch bekommt sein eigenes Foto, statt das vorherige zu überschreiben.'
+            ? 'Verknüpft — nur eine Berechtigung für alles. Die Sicherungsdatei (auftragsmappe-daten.json) liegt direkt in diesem Ordner, Fotos landen automatisch in Unterordnern (Ort / Straße+Zählerplatz-ID) darunter. Ganz normal im Explorer/OneDrive/Google Drive anschaubar.' + (settings.folderLastSync ? ' Zuletzt gespeichert: ' + fmtTs(settings.folderLastSync) : '')
             : photoFolderNeedsPermission
-              ? 'Ordner war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung.'
-              : 'Wähle einmal einen Ordner (z.B. deinen OneDrive-/SharePoint-synchronisierten "Bilder"-Ordner). Ab dann speichert die App jedes Foto automatisch als eigene Datei dort — ohne erneutes Nachfragen. Ohne Verknüpfung landen Fotos weiterhin im begrenzten Browser-Speicher (nur für ein einzelnes Foto gedacht).'
+              ? 'Ordner war schon einmal verknüpft, der Browser braucht aber nach einem Neustart einmal deine Bestätigung — dann läuft wieder alles automatisch weiter.'
+              : 'Wähle einmal einen Ordner (z.B. deinen OneDrive-/SharePoint-/Google-Drive-synchronisierten Ordner). Ab dann speichert die App automatisch sowohl die Sicherungsdatei als auch alle Fotos dort hinein — nur eine Berechtigung nötig, kein zweites Verknüpfen.'
         }
       </p>
     </div>
@@ -4836,7 +4798,6 @@ function icsEscape(s){
 --------------------------------------------------------------- */
 (async function init(){
   await loadAll();
-  await tryRestoreFolder();
   await tryRestorePhotoFolder();
   render();
   if(settings.remindersEnabled) startReminderChecks();
