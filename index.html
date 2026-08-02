@@ -950,7 +950,7 @@ async function getPhotoSrcList(id, type){
   const folderReady2 = photoFolderHandle && !photoFolderNeedsPermission;
   if(a && a.photos && a.photos.length && folderReady2){
     const results = await Promise.all(a.photos.map(async (p) => ({
-      filename: p.filename, koordinaten: p.koordinaten, genauigkeit: p.genauigkeit,
+      filename: p.filename, koordinaten: p.koordinaten, genauigkeit: p.genauigkeit, datum: p.datumLabel,
       src: await readPhotoFromFolder(p)
     })));
     return results.filter(r => r.src);
@@ -1280,8 +1280,14 @@ async function saveToFolder(){
 function scheduleFolderSync(){
   if(!photoFolderHandle || photoFolderNeedsPermission) return;
   clearTimeout(folderSyncTimer);
-  folderSyncTimer = setTimeout(saveToFolder, 1200);
+  // Längere Pause (statt 1,2s) vor dem Speichern — verhindert, dass unsere
+  // App und OneDrives eigener Sync-Client gleichzeitig auf dieselbe Datei
+  // zugreifen und OneDrive einen Konflikt/Fehler anzeigt.
+  folderSyncTimer = setTimeout(saveToFolder, 15000);
 }
+window.addEventListener('beforeunload', () => {
+  if(folderSyncTimer){ clearTimeout(folderSyncTimer); saveToFolder(); }
+});
 
 /* ---------------------------------------------------------------
    Address book helpers
@@ -4669,18 +4675,29 @@ function openAuftragHistory(id){
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Schließen</button></div>
   `);
 }
-async function openAdrUebersicht(id){
+async function openAdrUebersicht(id, filterDatum){
   const e = adressbuch.find(x => x.id === id);
   if(!e) return;
   showModal(`<div class="modal-head"><h3>Übersichtsblatt</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body"><p class="hint" style="margin-top:0">Lädt Fotos…</p></div>`);
 
-  const photos = await getPhotoSrcList(id, 'adressbuch');
+  const allPhotos = await getPhotoSrcList(id, 'adressbuch');
+  const photos = filterDatum ? allPhotos.filter(p => p.datum === filterDatum) : allPhotos;
+
+  const days = Array.from(new Set(allPhotos.map(p => p.datum).filter(Boolean))).sort().reverse();
+  const dayFilterHtml = days.length > 1 ? `
+    <div class="settings-row" style="margin-bottom:12px">
+      <label class="muted" style="font-size:12px">Tag:</label>
+      <select onchange="openAdrUebersicht('${id}', this.value || null)" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px">
+        <option value="" ${!filterDatum?'selected':''}>Alle Besuche (${allPhotos.length} Fotos)</option>
+        ${days.map(d => `<option value="${d}" ${filterDatum===d?'selected':''}>${d} (${allPhotos.filter(p=>p.datum===d).length} Fotos)</option>`).join('')}
+      </select>
+    </div>` : '';
 
   const row = (label, val) => val ? `<div style="margin-bottom:8px"><span style="font-weight:600;font-size:12px;color:var(--ink-soft)">${label}</span><br>${escapeHtml(val)}</div>` : '';
 
   const photoGrid = photos.length ? `
-    <h4 style="margin:18px 0 10px;font-family:var(--font-display)">Fotos (${photos.length})</h4>
+    <h4 style="margin:18px 0 10px;font-family:var(--font-display)">Fotos${filterDatum ? ' vom ' + filterDatum : ''} (${photos.length})</h4>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">
       ${photos.map(p => `
         <div>
@@ -4691,21 +4708,24 @@ async function openAdrUebersicht(id){
 
   showModal(`
     <div class="modal-head"><h3>📄 Übersichtsblatt</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <div class="modal-body" id="uebersichtPrintArea">
-      <h2 style="margin:0 0 4px;font-family:var(--font-display)">${escapeHtml(e.kundenname || e.adresse || 'Ohne Namen')}</h2>
-      <p class="hint" style="margin:0 0 16px">Messlokation: ${escapeHtml(e.kundencode || '–')}</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px">
-        ${row('Adresse', e.adresse)}
-        ${row('Standort', e.standort)}
-        ${row('Zähler', e.zaehler)}
-        ${row('Bauform', e.bauform)}
-        ${row('Zählerplatz-ID', e.zaehlerplatzId)}
-        ${row('Telefon', e.telefonnummer)}
-        ${row('E-Mail', e.email)}
-        ${row('Koordinaten', fmtCoords(e.koordinaten))}
+    <div class="modal-body">
+      ${dayFilterHtml}
+      <div id="uebersichtPrintArea">
+        <h2 style="margin:0 0 4px;font-family:var(--font-display)">${escapeHtml(e.kundenname || e.adresse || 'Ohne Namen')}</h2>
+        <p class="hint" style="margin:0 0 16px">Messlokation: ${escapeHtml(e.kundencode || '–')}${filterDatum ? ' · Besuch vom ' + filterDatum : ''}</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px">
+          ${row('Adresse', e.adresse)}
+          ${row('Standort', e.standort)}
+          ${row('Zähler', e.zaehler)}
+          ${row('Bauform', e.bauform)}
+          ${row('Zählerplatz-ID', e.zaehlerplatzId)}
+          ${row('Telefon', e.telefonnummer)}
+          ${row('E-Mail', e.email)}
+          ${row('Koordinaten', fmtCoords(e.koordinaten))}
+        </div>
+        ${e.notiz ? `<div style="margin-top:8px"><span style="font-weight:600;font-size:12px;color:var(--ink-soft)">Notiz</span><br>${escapeHtml(e.notiz)}</div>` : ''}
+        ${photoGrid}
       </div>
-      ${e.notiz ? `<div style="margin-top:8px"><span style="font-weight:600;font-size:12px;color:var(--ink-soft)">Notiz</span><br>${escapeHtml(e.notiz)}</div>` : ''}
-      ${photoGrid}
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeModal()">Schließen</button>
