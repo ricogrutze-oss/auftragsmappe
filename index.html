@@ -501,7 +501,7 @@
 <body>
 
 <header class="app-head">
-  <div class="eyebrow">Kundenvorgänge · Adressbuch · Termine</div>
+  <div class="eyebrow">Kundenvorgänge · Anlagen · Termine</div>
   <div class="app-title">Auftragsmappe <span class="stamp" id="orgEmailStamp">Absender nicht gesetzt</span></div>
 </header>
 
@@ -511,7 +511,7 @@
   <div class="tab active" data-tab="offen" onclick="switchTab('offen')" title="Offene Aufträge">📋 <span class="n" id="tabCountOffen">0</span></div>
   <div class="tab" data-tab="erledigt" onclick="switchTab('erledigt')" title="Erledigte Aufträge">✅ <span class="n" id="tabCountErledigt">0</span></div>
   <div class="tab" data-tab="termine" onclick="switchTab('termine')" title="Termine">📅 <span class="n" id="tabCountTermine">0</span><span class="n" id="tabCountCallback" style="display:none;background:var(--red);color:#fff"></span></div>
-  <div class="tab" data-tab="adressbuch" onclick="switchTab('adressbuch')" title="Adressbuch">📇 <span class="n" id="tabCountAdr">0</span></div>
+  <div class="tab" data-tab="adressbuch" onclick="switchTab('adressbuch')" title="Anlagen">📇 <span class="n" id="tabCountAdr">0</span></div>
   <div class="tab" data-tab="statistik" onclick="switchTab('statistik')" title="Statistik">📊</div>
   <div class="tab" data-tab="einstellungen" onclick="switchTab('einstellungen')" title="Einstellungen">⚙️<span class="n" id="tabWarnBackup" style="display:none;background:var(--red);color:#fff">!</span></div>
 </div>
@@ -551,7 +551,7 @@ const STATUS = {
 };
 
 let auftraege = [];   // array of Auftrag objects
-let adressbuch = [];  // array of Adressbuch entries
+let adressbuch = [];  // array of Anlagen entries
 let settings = { organizerEmail: '', lastImport: null };
 let columnMapping = null; // { kundencode, vorgang, telefonnummer, adresse, zaehlerplatzId, koordinaten }
 let currentTab = 'offen';
@@ -796,13 +796,77 @@ async function sharePhotoBlob(blob, filename){
   // always works, no share-target picker needed.
   downloadPhotoBlob(blob, filename);
   showToast('Foto im Download-Ordner gespeichert: ' + filename);
-
-  // Also offer sharing (e.g. straight to OneDrive) as an optional extra step.
-  const file = new File([blob], filename, { type: 'image/jpeg' });
-  if(navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
-    try{ await navigator.share({ files: [file], title: filename }); }
-    catch(e){ /* user closed the share sheet — the download already happened, that's fine */ }
+}
+function flatPhotoFilename(a, datum){
+  const datumLabel = (datum || todayDe()).split('.').join('-');
+  const zaehler = sanitizeFilename((a && a.zaehler) || 'ohne-zaehlernummer');
+  const zpid = sanitizeFilename((a && a.zaehlerplatzId) || '');
+  return zpid ? `${datumLabel}_${zaehler}_${zpid}.jpg` : `${datumLabel}_${zaehler}.jpg`;
+}
+async function collectPendingLocalPhotos(){
+  const files = [];
+  const keys = [];
+  for(const a of auftraege){
+    const raw = await kvGet('photo_' + a.id);
+    if(!raw) continue;
+    let dataUrl, datum;
+    try{ const parsed = JSON.parse(raw); dataUrl = parsed.dataUrl; datum = parsed.datum; }
+    catch(e){ dataUrl = raw; datum = todayDe(); }
+    if(!dataUrl) continue;
+    const blob = await (await fetch(dataUrl)).blob();
+    files.push(new File([blob], flatPhotoFilename(a, datum), { type:'image/jpeg' }));
+    keys.push('photo_' + a.id);
   }
+  for(const e of adressbuch){
+    const raw = await kvGet('photo_' + e.id);
+    if(!raw) continue;
+    let dataUrl, datum;
+    try{ const parsed = JSON.parse(raw); dataUrl = parsed.dataUrl; datum = parsed.datum; }
+    catch(err){ dataUrl = raw; datum = todayDe(); }
+    if(!dataUrl) continue;
+    const blob = await (await fetch(dataUrl)).blob();
+    files.push(new File([blob], flatPhotoFilename(e, datum), { type:'image/jpeg' }));
+    keys.push('photo_' + e.id);
+  }
+  return { files, keys };
+}
+async function shareAllPendingPhotos(){
+  showToast('Fotos werden vorbereitet…');
+  const { files, keys } = await collectPendingLocalPhotos();
+  if(files.length === 0){ showToast('Keine lokal gespeicherten Fotos zum Sichern'); return; }
+
+  if(navigator.share && navigator.canShare && navigator.canShare({ files })){
+    try{
+      await navigator.share({ files, title: `${files.length} Fotos` });
+      showModal(`
+        <div class="modal-head"><h3>Fotos geteilt</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+        <div class="modal-body"><p class="hint" style="margin-top:0">Wenn die Fotos in OneDrive angekommen sind: Lokale Kopien in der App jetzt löschen, um Platz zu sparen?</p></div>
+        <div class="modal-foot">
+          <button class="btn ghost" onclick="closeModal()">Behalten</button>
+          <button class="btn danger" onclick="clearPendingLocalPhotos()">Lokale Kopien löschen</button>
+        </div>
+      `);
+      window.__pendingPhotoKeys = keys;
+    }catch(e){ /* user cancelled the share sheet — keep everything as-is */ }
+  } else if(files.length === 1 && navigator.share){
+    try{ await navigator.share({ files, title: files[0].name }); }catch(e){}
+  } else {
+    showToast(`Teilen mehrerer Dateien wird auf diesem Gerät nicht unterstützt (${files.length} Fotos betroffen)`);
+  }
+}
+async function clearPendingLocalPhotos(){
+  const keys = window.__pendingPhotoKeys || [];
+  for(const k of keys){ await kvSet(k, ''); }
+  window.__pendingPhotoKeys = null;
+  closeModal();
+  render();
+  showToast('Lokale Fotokopien gelöscht');
+}
+async function countPendingLocalPhotos(){
+  let count = 0;
+  for(const a of auftraege){ if(await kvGet('photo_' + a.id)) count++; }
+  for(const e of adressbuch){ if(await kvGet('photo_' + e.id)) count++; }
+  return count;
 }
 
 function nextPhotoFilename(a, zaehlerLabel, datumLabel){
@@ -867,18 +931,13 @@ document.getElementById('photoInput').addEventListener('change', async function(
           <div class="modal-body"><p class="hint" style="margin-top:0">Das Foto liegt vorerst im begrenzten App-Speicher. Prüfe, ob der verknüpfte Ordner noch existiert/erreichbar ist.</p></div>
           <div class="modal-foot"><button class="btn primary" onclick="closeModal()">Verstanden</button></div>
         `);
-        await kvSet('photo_' + id, dataUrl);
+        await kvSet('photo_' + id, JSON.stringify({ dataUrl, datum: todayDe() }));
       }
     } else {
-      // No folder linked (typically mobile) — local storage only realistically
-      // fits a single photo. Offer to share it out (e.g. to OneDrive) right away,
-      // using the same filename scheme as the desktop file storage.
-      await kvSet('photo_' + id, dataUrl);
-      const kundencode = sanitizeFilename((a && a.kundencode) || 'ohne-kundencode');
-      const zaehler = sanitizeFilename((a && a.zaehler) || 'ohne-zaehlernummer');
-      const datum = todayDe().split('.').join('-');
-      const shareFilename = `${kundencode}_${zaehler}_${datum}.jpg`;
-      await sharePhotoBlob(blob, shareFilename);
+      // No folder linked (typically mobile) — store locally with its capture
+      // date, so it can be picked up later by the once-a-day "Alle sichern".
+      await kvSet('photo_' + id, JSON.stringify({ dataUrl, datum: todayDe() }));
+      showToast('Foto gespeichert — später über "📤 Alle Fotos sichern" nach OneDrive übertragen');
     }
     refreshPhotoArea(id, type, photoTargetElementId);
   }catch(err){
@@ -896,9 +955,13 @@ async function getPhotoSrcList(id, type){
     })));
     return results.filter(r => r.src);
   }
-  const dataUrl = await kvGet('photo_' + id);
-  if(dataUrl) return [{ filename: null, koordinaten: a ? a.koordinaten : null, genauigkeit: null, src: dataUrl }];
-  return [];
+  const raw = await kvGet('photo_' + id);
+  if(!raw) return [];
+  try{
+    const parsed = JSON.parse(raw);
+    if(parsed && parsed.dataUrl) return [{ filename: null, koordinaten: a ? a.koordinaten : null, genauigkeit: null, datum: parsed.datum, src: parsed.dataUrl }];
+  }catch(e){ /* old plain-string format */ }
+  return [{ filename: null, koordinaten: a ? a.koordinaten : null, genauigkeit: null, src: raw }];
 }
 
 async function refreshPhotoArea(id, type, elementId){
@@ -912,6 +975,7 @@ async function refreshPhotoArea(id, type, elementId){
 function photoAreaHtml(id, photos, type, elementId){
   type = type || 'auftrag';
   elementId = elementId || 'photoArea';
+  const hasLocalPhoto = photos.some(p => p.filename === null);
   const thumbs = photos.map((p, idx) => `
     <div style="flex:0 0 auto;width:110px">
       <div style="position:relative">
@@ -924,6 +988,7 @@ function photoAreaHtml(id, photos, type, elementId){
     <div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:8px">${thumbs}</div>
     <div class="settings-row">
       <button class="btn small" onclick="triggerPhotoCapture('${id}', '${type}', '${elementId}')">📷 ${photos.length ? 'Foto hinzufügen' : 'Foto aufnehmen'}</button>
+      ${hasLocalPhoto ? `<button class="btn small primary" onclick="shareAllPendingPhotos()">📤 Alle Fotos jetzt sichern (OneDrive)</button>` : ''}
     </div>
     ${photos.length ? `<p class="hint" style="margin:6px 0 0">📍 Standort wird bei jedem Foto frisch gemessen und mit gespeichert (EXIF + Link unterm Bild)</p>` : ''}`;
 }
@@ -1118,7 +1183,7 @@ function parseOrtUndStrasse(adresse){
 }
 async function getNestedPhotoFolder(a, datumLabel){
   if(!photoFolderHandle) return null;
-  // Cache the Ort/Straßen-Ordnername on the canonical Adressbuch-Eintrag
+  // Cache the Ort/Straßen-Ordnername on the canonical Anlagen-Eintrag
   // (nicht pro Auftrag) — Zählerplatz-ID entscheidet, einmal festgelegt bleibt
   // der Ordnername für immer gleich, auch wenn spätere Importe die Straße
   // anders schreiben. Verhindert doppelte Ordner für dieselbe Anlage.
@@ -1784,7 +1849,7 @@ function runImport(){
 
     if(importAdrOnlyMode || !vorgang.trim() || !kundencode.trim()){
       adrOnly++;
-      continue; // Adressbuch-only mode, or no Auftragstyp/Messlokation → address book updated, but no Auftrag created
+      continue; // Anlagen-only mode, or no Auftragstyp/Messlokation → address book updated, but no Auftrag created
     }
 
     const key = norm(kundencode) + '|' + (useAuftragsnummer ? norm(auftragsnummer) : norm(vorgang));
@@ -1849,11 +1914,11 @@ function runImport(){
   render();
 
   if(importAdrOnlyMode){
-    showToast(`Adressbuch-Import fertig: ${adrOnly} Zeilen verarbeitet, ${updatedExisting} bestehende ergänzt, keine Aufträge angelegt`);
+    showToast(`Anlagen-Import fertig: ${adrOnly} Zeilen verarbeitet, ${updatedExisting} bestehende ergänzt, keine Aufträge angelegt`);
   } else {
     const bits = [`${added} neu`];
     if(updatedExisting) bits.push(`${updatedExisting} bestehende ergänzt`);
-    if(adrOnly) bits.push(`${adrOnly} nur ins Adressbuch (kein Vorgang)`);
+    if(adrOnly) bits.push(`${adrOnly} nur ins Anlagen (kein Vorgang)`);
     bits.push(`${skippedDup - updatedExisting} unverändert übersprungen`);
     showToast(`Import fertig: ${bits.join(', ')}`);
   }
@@ -1882,7 +1947,7 @@ function adressbuchExportRows(){
 }
 
 function exportAdressbuchExcel(){
-  if(adressbuch.length === 0){ showToast('Adressbuch ist leer'); return; }
+  if(adressbuch.length === 0){ showToast('Anlagen ist leer'); return; }
   const rows = adressbuchExportRows();
   const ws = XLSX.utils.json_to_sheet(rows);
   // Force ID-like columns to text format so Excel never turns them into numbers
@@ -1899,13 +1964,13 @@ function exportAdressbuchExcel(){
     }
   });
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Adressbuch');
+  XLSX.utils.book_append_sheet(wb, ws, 'Anlagen');
   XLSX.writeFile(wb, `adressbuch-export-${new Date().toISOString().slice(0,10)}.xlsx`);
-  showToast('Adressbuch als Excel exportiert');
+  showToast('Anlagen als Excel exportiert');
 }
 
 function exportAdressbuchCsv(){
-  if(adressbuch.length === 0){ showToast('Adressbuch ist leer'); return; }
+  if(adressbuch.length === 0){ showToast('Anlagen ist leer'); return; }
   const rows = adressbuchExportRows();
   const csv = Papa.unparse(rows);
   // UTF-8 BOM so Excel shows Umlaute (ä/ö/ü) correctly when opening the CSV directly
@@ -1918,7 +1983,7 @@ function exportAdressbuchCsv(){
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-  showToast('Adressbuch als CSV exportiert');
+  showToast('Anlagen als CSV exportiert');
 }
 
 async function exportBackup(){
@@ -2496,7 +2561,7 @@ function backupStalenessWarningHtml(){
 function renderEinstellungen(){
   const lp = settings.lastImport;
   const lastImportText = lp
-    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu${lp.updatedExisting ? ' · ' + lp.updatedExisting + ' bestehende ergänzt' : ''}${lp.adrOnly ? ' · ' + lp.adrOnly + ' nur ins Adressbuch' : ''} · ${lp.skippedDup} Duplikate übersprungen`
+    ? `Letzter Import: ${fmtTs(lp.ts)} · +${lp.added} neu${lp.updatedExisting ? ' · ' + lp.updatedExisting + ' bestehende ergänzt' : ''}${lp.adrOnly ? ' · ' + lp.adrOnly + ' nur ins Anlagen' : ''} · ${lp.skippedDup} Duplikate übersprungen`
     : 'Noch kein Import';
 
   const syncBits = [];
@@ -2511,11 +2576,11 @@ function renderEinstellungen(){
       <h4>Daten importieren</h4>
       <div class="settings-row">
         <button class="btn primary" onclick="startImport(false)">Datei importieren (CSV/Excel)</button>
-        <button class="btn" onclick="startImport(true)">📇 Nur ins Adressbuch importieren</button>
+        <button class="btn" onclick="startImport(true)">📇 Nur in die Anlagen importieren</button>
         <button class="btn" onclick="openMappingModal(true)">Spaltenzuordnung</button>
       </div>
       <p class="hint">${escapeHtml(lastImportText)}</p>
-      <p class="hint">"Nur ins Adressbuch" ist gedacht für alte, bereits erledigte Vorgänge: Anschrift, Zähler, Telefon usw. landen im Adressbuch, es werden aber keine neuen Aufträge angelegt.</p>
+      <p class="hint">"Nur in die Anlagen" ist gedacht für alte, bereits erledigte Vorgänge: Anschrift, Zähler, Telefon usw. landen in den Anlagen, es werden aber keine neuen Aufträge angelegt.</p>
     </div>
 
     <div class="settings-section">
@@ -2542,6 +2607,14 @@ function renderEinstellungen(){
         <button class="btn" onclick="addCustomField()">+ Feld hinzufügen</button>
       </div>
       <p class="hint">Eigene Felder erscheinen als zusätzliche, frei editierbare Spalte in der Auftragstabelle und im Bearbeiten-Fenster.</p>
+    </div>
+
+    <div class="settings-section">
+      <h4>Fotos sichern (Handy)</h4>
+      <div class="settings-row">
+        <button class="btn primary" onclick="shareAllPendingPhotos()">📤 Alle Fotos jetzt sichern (OneDrive)</button>
+      </div>
+      <p class="hint">Sammelt alle Fotos, die noch nicht im verknüpften Hauptordner liegen (typisch am Handy), und teilt sie auf einmal — z.B. einmal am Tag. Dateiname: Datum_Zählernummer(_Zählerplatz-ID).jpg.</p>
     </div>
 
     <div class="settings-section">
@@ -2614,22 +2687,22 @@ function renderEinstellungen(){
     </div>
 
     <div class="settings-section">
-      <h4>Adressbuch extern exportieren</h4>
+      <h4>Anlagen extern exportieren</h4>
       <div class="settings-row">
         <button class="btn" onclick="exportAdressbuchExcel()">📊 Als Excel</button>
         <button class="btn" onclick="exportAdressbuchCsv()">📄 Als CSV</button>
       </div>
-      <p class="hint">Eigenständige Datei nur mit dem Adressbuch, unabhängig von dieser App lesbar (Excel, Datenbanken, GIS-Tools) — für dein dauerhaftes Archiv. IDs/Zählernummern sind als Text formatiert, damit Excel sie nicht in Zahlen verwandelt.</p>
+      <p class="hint">Eigenständige Datei nur mit dem Anlagen, unabhängig von dieser App lesbar (Excel, Datenbanken, GIS-Tools) — für dein dauerhaftes Archiv. IDs/Zählernummern sind als Text formatiert, damit Excel sie nicht in Zahlen verwandelt.</p>
     </div>
 
     <div class="settings-section" style="border-color:var(--red-bg)">
       <h4 style="color:var(--red)">Daten zurücksetzen</h4>
       <div class="settings-row">
         <button class="btn danger" onclick="confirmResetAuftraege()">Alle Aufträge löschen</button>
-        <button class="btn danger" onclick="confirmResetAdressbuch()">Adressbuch löschen</button>
+        <button class="btn danger" onclick="confirmResetAdressbuch()">Anlagen löschen</button>
         <button class="btn" onclick="confirmResetMapping()">Spaltenzuordnung zurücksetzen</button>
       </div>
-      <p class="hint">Zum Testen einer neuen Datenstruktur reicht meist „Alle Aufträge löschen" + „Spaltenzuordnung zurücksetzen". Das Adressbuch ist bewusst dauerhaft — lösche es nur, wenn du wirklich neu anfangen willst.</p>
+      <p class="hint">Zum Testen einer neuen Datenstruktur reicht meist „Alle Aufträge löschen" + „Spaltenzuordnung zurücksetzen". Das Anlagen ist bewusst dauerhaft — lösche es nur, wenn du wirklich neu anfangen willst.</p>
     </div>
 
     <div class="settings-section" style="border-color:var(--red-bg)">
@@ -2645,7 +2718,7 @@ function renderEinstellungen(){
       <div class="settings-row">
         <button class="btn danger" onclick="confirmResetZaehler()">Zähler-Werte zurücksetzen</button>
       </div>
-      <p class="hint">Leert das Zähler-Feld bei allen Aufträgen/Adressbuch-Einträgen (Status, Notizen, Termine, Koordinaten, Fotos bleiben erhalten). Danach Ursprungsdatei neu importieren, um jeden Auftrag wieder mit dem korrekten, zeilenspezifischen Zähler zu befüllen. Nützlich, wenn Zähler-Werte durch frühere Test-Importe durcheinandergeraten sind.</p>
+      <p class="hint">Leert das Zähler-Feld bei allen Aufträgen/Anlagen-Einträgen (Status, Notizen, Termine, Koordinaten, Fotos bleiben erhalten). Danach Ursprungsdatei neu importieren, um jeden Auftrag wieder mit dem korrekten, zeilenspezifischen Zähler zu befüllen. Nützlich, wenn Zähler-Werte durch frühere Test-Importe durcheinandergeraten sind.</p>
     </div>
 
     <div class="settings-section" style="border-color:var(--red-bg)">
@@ -2661,7 +2734,7 @@ function renderEinstellungen(){
 function confirmResetAuftraege(){
   showModal(`
     <div class="modal-head"><h3>Alle Aufträge löschen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle offenen und erledigten Aufträge inkl. Verlauf unwiderruflich. Das Adressbuch bleibt unberührt. Nicht rückgängig zu machen.</p></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle offenen und erledigten Aufträge inkl. Verlauf unwiderruflich. Das Anlagen bleibt unberührt. Nicht rückgängig zu machen.</p></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetAuftraege()">Endgültig löschen</button></div>
   `);
 }
@@ -2675,8 +2748,8 @@ function doResetAuftraege(){
 
 function confirmResetAdressbuch(){
   showModal(`
-    <div class="modal-head"><h3>Adressbuch löschen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
-    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle Adressbuch-Einträge inkl. Verlauf unwiderruflich — auch die, die nicht mehr aus offenen Aufträgen stammen. Nicht rückgängig zu machen.</p></div>
+    <div class="modal-head"><h3>Anlagen löschen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-body"><p class="hint" style="margin-top:0">Löscht alle Anlagen-Einträge inkl. Verlauf unwiderruflich — auch die, die nicht mehr aus offenen Aufträgen stammen. Nicht rückgängig zu machen.</p></div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetAdressbuch()">Endgültig löschen</button></div>
   `);
 }
@@ -2685,7 +2758,7 @@ function doResetAdressbuch(){
   saveAdressbuch();
   closeModal();
   render();
-  showToast('Adressbuch gelöscht');
+  showToast('Anlagen gelöscht');
 }
 
 function dupKeyFor(mode, a){
@@ -2790,7 +2863,7 @@ function confirmResetKoordinaten(){
 }
 function findSuspectAuftraege(){
   // The actual bug: multiple Aufträge with DIFFERENT Messlokation/Zähler
-  // incorrectly pointing at the very SAME Adressbuch-entry object (adrEntryId).
+  // incorrectly pointing at the very SAME Anlagen-entry object (adrEntryId).
   // That's a real merge error. This deliberately does NOT look at coordinate
   // VALUES, because it's entirely legitimate for many different Messlokationen
   // to share the same real-world position (e.g. a Stationsgebäude or
@@ -2814,7 +2887,7 @@ function confirmResetZaehler(){
   showModal(`
     <div class="modal-head"><h3>Zähler-Werte zurücksetzen?</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <p class="hint" style="margin-top:0">Leert das Zähler-Feld bei <strong>allen</strong> Aufträgen und Adressbuch-Einträgen. Status, Notizen, Termine, Koordinaten, Fotos und alles andere bleiben unangetastet.</p>
+      <p class="hint" style="margin-top:0">Leert das Zähler-Feld bei <strong>allen</strong> Aufträgen und Anlagen-Einträgen. Status, Notizen, Termine, Koordinaten, Fotos und alles andere bleiben unangetastet.</p>
       <p class="hint">Grund: Aus früheren Test-Importen können falsche/veraltete Zähler-Werte hängengeblieben sein, die ein normaler Reimport nicht überschreibt (er füllt nur leere Felder). Danach deine saubere Ursprungsdatei neu importieren, dann wird jeder Auftrag wieder mit seinem korrekten, zeilenspezifischen Zähler befüllt.</p>
     </div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Abbrechen</button><button class="btn danger" onclick="doResetZaehler()">Zähler zurücksetzen</button></div>
@@ -2854,7 +2927,7 @@ function doResetKoordinaten(){
     a.koordinatenGenauigkeit = null;
     a.koordinatenQuelle = '';
     // Also clear the wrong shared link itself — otherwise a reimport would just
-    // find the same wrongly-shared Adressbuch entry again via this stale id
+    // find the same wrongly-shared Anlagen entry again via this stale id
     // and the coordinates would get merged right back together.
     a.history.push({ ts: nowIso(), field:'adrEntryId', old: a.adrEntryId, new:'(wird bei Import/Speichern neu verknüpft)' });
     a.adrEntryId = '';
@@ -3208,7 +3281,7 @@ let pendingScanCallback = null;
 function openScanner(){
   scannerFillTarget = null;
   pendingScanCallback = null;
-  openScannerModalUi('Zähler scannen', 'Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Adressbuch — springt direkt in die Bearbeitung.');
+  openScannerModalUi('Zähler scannen', 'Halte den Barcode/QR-Code der Zählernummer vor die Kamera. Gefunden wird über das Feld „Zähler" bei Aufträgen und im Anlagen — springt direkt in die Bearbeitung.');
 }
 function openScannerModalUi(title, hint){
   if(typeof ZXing === 'undefined'){
@@ -3321,7 +3394,7 @@ function onScanSuccess(decodedText){
     switchTab('adressbuch');
     adrDetailsOpen[adrHit.id] = true;
     render();
-    showToast('Im Adressbuch gefunden: ' + (adrHit.kundenname || adrHit.adresse));
+    showToast('Im Anlagen gefunden: ' + (adrHit.kundenname || adrHit.adresse));
     return;
   }
   offerNewEntryForScannedZaehler(val);
@@ -3331,8 +3404,8 @@ function offerNewEntryForScannedZaehler(val){
   showModal(`
     <div class="modal-head"><h3>Kein Treffer</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
-      <p class="hint" style="margin-top:0">Kein Auftrag und kein Adressbuch-Eintrag mit Zähler „${escapeHtml(val)}" gefunden.</p>
-      <p class="hint">Gleich einen neuen Adressbuch-Eintrag damit anlegen?</p>
+      <p class="hint" style="margin-top:0">Kein Auftrag und kein Anlagen-Eintrag mit Zähler „${escapeHtml(val)}" gefunden.</p>
+      <p class="hint">Gleich einen neuen Anlagen-Eintrag damit anlegen?</p>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
@@ -3647,7 +3720,7 @@ function openZaehlerWechselModal(auftragId, prefillVal){
           <button class="icon-btn" onclick="scanForZaehlerWechsel('${auftragId}')" title="Neuen Zähler scannen">📷</button>
         </div>
       </div>
-      <p class="hint">Der Wechsel wird im Verlauf festgehalten (alter → neuer Zähler, mit Datum) — bei Auftrag und Adressbuch.</p>
+      <p class="hint">Der Wechsel wird im Verlauf festgehalten (alter → neuer Zähler, mit Datum) — bei Auftrag und Anlagen.</p>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeModal()">Abbrechen</button>
@@ -3921,13 +3994,13 @@ function renderAuftragTable(list, isErledigtTab){
 let adrSearch = '';
 
 /* ---------------------------------------------------------------
-   Manuelles Anlegen eines Adressbuch-Eintrags (Zähler + Standort Pflicht)
+   Manuelles Anlegen eines Anlagen-Eintrags (Zähler + Standort Pflicht)
 --------------------------------------------------------------- */
 function openNewAdrEntryModal(prefill){
   prefill = prefill || {};
   const pv = (k) => escapeHtml(prefill[k] || '');
   showModal(`
-    <div class="modal-head"><h3>Neuer Adressbuch-Eintrag</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Neuer Anlagen-Eintrag</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">
       <div class="field">
         <label>Zähler(-nummer) <span class="req-star">*</span></label>
@@ -4079,7 +4152,7 @@ function initAdrMap(entries){
   if(adrMapInstance){ adrMapInstance.remove(); adrMapInstance = null; }
 
   if(withCoords.length === 0){
-    el.outerHTML = `<div class="map-empty">Keine Koordinaten im Adressbuch vorhanden.</div>`;
+    el.outerHTML = `<div class="map-empty">Keine Koordinaten im Anlagen vorhanden.</div>`;
     return;
   }
 
@@ -4146,7 +4219,7 @@ function renderAdressbuch(){
       <button class="btn primary" onclick="openNewAdrEntryModal()">+ Neuer Eintrag</button>
     </div>
     <div class="empty-state">
-      <div class="big">Adressbuch ist leer</div>
+      <div class="big">Anlagen ist leer</div>
       <div>Einträge entstehen automatisch beim Import und bleiben dauerhaft erhalten, oder leg selbst einen an.</div>
     </div>`;
   }
@@ -4275,7 +4348,7 @@ function ensureAdrEntryForAuftrag(a){
     const existing = adressbuch.find(e => e.id === a.adrEntryId);
     if(existing) return existing;
   }
-  // Link is missing or points at a deleted entry (e.g. after "Adressbuch löschen")
+  // Link is missing or points at a deleted entry (e.g. after "Anlagen löschen")
   // — heal it by creating a fresh entry from the Auftrag's current data instead
   // of silently dropping the update.
   const entry = {
@@ -4475,7 +4548,7 @@ function openAuftragEditModal(id){
 
       <div class="settings-row" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line-soft)">
         <button class="btn small" onclick="openAuftragHistory('${a.id}')">🕒 Verlauf</button>
-        <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Adressbuch</button>
+        <button class="btn small" onclick="jumpToAdressbuch('${a.adrEntryId}')">📇 Anlagen</button>
       </div>
     </div>
     <div class="modal-foot">
@@ -4656,7 +4729,7 @@ function openAdrHistory(id){
   const e = adressbuch.find(x => x.id === id);
   if(!e) return;
   showModal(`
-    <div class="modal-head"><h3>Verlauf · ${escapeHtml(e.adresse || e.zaehlerplatzId || 'Adressbuch')}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
+    <div class="modal-head"><h3>Verlauf · ${escapeHtml(e.adresse || e.zaehlerplatzId || 'Anlagen')}</h3><button class="close-x" onclick="closeModal()">✕</button></div>
     <div class="modal-body">${historyHtml(e.history)}</div>
     <div class="modal-foot"><button class="btn ghost" onclick="closeModal()">Schließen</button></div>
   `);
