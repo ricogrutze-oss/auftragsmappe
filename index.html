@@ -1261,7 +1261,7 @@ async function loadFromFolder(silent){
     const text = await file.text();
     if(!text || !text.trim()) return;
     const data = JSON.parse(text);
-    if(data.kind === 'auftragsmappe-sicherung'){
+    if(data.kind === 'auftragsmappe-sicherung' || (Array.isArray(data.auftraege) && Array.isArray(data.adressbuch))){
       mergeBackup(data, silent);
     }
   }catch(e){ console.error('loadFromFolder', e); }
@@ -2043,9 +2043,14 @@ document.getElementById('backupInput').addEventListener('change', function(e){
     let data;
     try{ data = JSON.parse(evt.target.result); }
     catch(err){ showToast('Datei ist kein gültiges Sicherungs-JSON'); return; }
-    if(data.kind !== 'auftragsmappe-sicherung'){
-      showToast('Das ist keine Auftragsmappen-Sicherungsdatei');
+    const looksValid = data.kind === 'auftragsmappe-sicherung'
+      || (Array.isArray(data.auftraege) && Array.isArray(data.adressbuch));
+    if(!looksValid){
+      showToast('Das ist keine Auftragsmappen-Sicherungsdatei (keine Aufträge/Anlagen darin gefunden)');
       return;
+    }
+    if(data.kind !== 'auftragsmappe-sicherung'){
+      showToast('Hinweis: Kennzeichnung fehlte in der Datei, importiere trotzdem (Struktur passt)');
     }
     mergeBackup(data);
   };
@@ -3396,11 +3401,7 @@ function onScanSuccess(decodedText){
   }
   const adrHit = adressbuch.find(e => e.zaehler && (e.zaehler.trim() === val || e.zaehler.includes(val)));
   if(adrHit){
-    adrViewMode = 'liste';
-    switchTab('adressbuch');
-    adrDetailsOpen[adrHit.id] = true;
-    render();
-    showToast('Im Anlagen gefunden: ' + (adrHit.kundenname || adrHit.adresse));
+    openAnlageDetailModal(adrHit.id);
     return;
   }
   offerNewEntryForScannedZaehler(val);
@@ -3899,7 +3900,7 @@ const CELL_RENDERERS = {
   telefonnummer: (a) => telefonCellWithSearch(a),
   email: (a) => readonlyCell(a, 'email', COLUMN_LABELS.email),
   adresse: (a) => readonlyCell(a, 'adresse', COLUMN_LABELS.adresse),
-  standort: (a) => readonlyCell(a, 'standort', COLUMN_LABELS.standort),
+  standort: (a) => `<td data-label="${COLUMN_LABELS.standort}"><input class="cell-input" type="text" value="${escapeHtml(a.standort||'')}" list="standortSuggestions" onchange="updateAuftragField('${a.id}','standort', this.value)"></td>`,
   zaehler: (a) => readonlyCell(a, 'zaehler', COLUMN_LABELS.zaehler),
   bauform: (a) => readonlyCell(a, 'bauform', COLUMN_LABELS.bauform),
   kommentar: (a) => `<td data-label="${COLUMN_LABELS.kommentar}">
@@ -4543,9 +4544,12 @@ function openAuftragEditModal(id){
       <div class="ro-info-grid">
         ${infoRow('👤', a.kundenname)}
         ${infoRow('📍', a.adresse)}
-        ${infoRow('🏷️', a.standort)}
         ${infoRow('🔧', a.bauform)}
         ${infoRow('✉️', a.email)}
+      </div>
+      <div class="field">
+        <label>🏷️ Standort</label>
+        <input class="cell-input" type="text" value="${escapeHtml(a.standort||'')}" list="standortSuggestions" onchange="updateAuftragField('${a.id}','standort', this.value)">
       </div>
       <div class="ro-info-item" style="margin-bottom:12px">
         <span class="ro-info-label">🔢</span>
@@ -4699,9 +4703,8 @@ function renderCustomFieldInputs(a){
 
 function jumpToAdressbuch(entryId){
   closeModal();
-  switchTab('adressbuch');
-  if(entryId){ adrDetailsOpen[entryId] = true; }
-  render();
+  if(!entryId){ showToast('Keine verknüpfte Anlage gefunden'); return; }
+  openAnlageDetailModal(entryId);
 }
 
 function saveAuftragEditModal(id){
